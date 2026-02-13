@@ -74,6 +74,32 @@ export type {
   TranscriptRewriteRequest,
   TranscriptRewriteResult,
 } from "../context-engine/types.js";
+export type {
+  DiagnosticHeartbeatEvent,
+  DiagnosticInferenceEvent,
+  DiagnosticInferenceStartedEvent,
+  DiagnosticLaneDequeueEvent,
+  DiagnosticLaneEnqueueEvent,
+  DiagnosticMessageProcessedEvent,
+  DiagnosticMessageQueuedEvent,
+  DiagnosticRunAttemptEvent,
+  DiagnosticRunStartedEvent,
+  DiagnosticRunCompletedEvent,
+  DiagnosticSessionState,
+  DiagnosticSessionStateEvent,
+  DiagnosticSessionStuckEvent,
+  DiagnosticToolExecutionEvent,
+  DiagnosticWebhookErrorEvent,
+  DiagnosticWebhookProcessedEvent,
+  DiagnosticWebhookReceivedEvent,
+  GenAiMessage,
+  GenAiPart,
+  GenAiToolDef,
+} from "../infra/diagnostic-events.js";
+export { detectMime, extensionForMime, getFileExtension } from "../media/mime.js";
+export { extractOriginalFilename } from "../media/store.js";
+export { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
+export type { SkillCommandSpec } from "../agents/skills.js";
 
 export { emptyPluginConfigSchema } from "../plugins/config-schema.js";
 export { registerContextEngine } from "../context-engine/registry.js";
