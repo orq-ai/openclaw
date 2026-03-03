@@ -7,9 +7,6 @@ import {
   DefaultResourceLoader,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
-import fs from "node:fs/promises";
-import os from "node:os";
-import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
@@ -124,7 +121,7 @@ import {
   buildGenAiToolDefsFromContext,
 } from "./diagnostic-builders.js";
 import { pruneProcessedHistoryImages } from "./history-image-prune.js";
-import { detectAndLoadPromptImages, injectHistoryImagesIntoMessages } from "./images.js";
+import { detectAndLoadPromptImages } from "./images.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 
 type PromptBuildHookRunner = {
@@ -1294,8 +1291,6 @@ export async function runEmbeddedAttempt(
         session: activeSession,
         runId: params.runId,
         captureContent,
-        sessionKey: params.sessionKey ?? params.sessionId,
-        sessionId: params.sessionId,
         channel: params.messageChannel,
         hookRunner: getGlobalHookRunner() ?? undefined,
         verboseLevel: params.verboseLevel,
