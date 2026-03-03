@@ -45,6 +45,7 @@ import {
   resolveModelFallbackOptions,
 } from "./agent-runner-utils.js";
 import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
+import type { FollowupRun } from "./queue.js";
 import { createBlockReplyDeliveryHandler } from "./reply-delivery.js";
 import { createReplyMediaPathNormalizer } from "./reply-media-paths.runtime.js";
 import type { TypingSignaler } from "./typing-mode.js";
@@ -706,9 +707,11 @@ export async function runAgentTurnWithFallback(params: {
   if (finalEmbeddedError && isContextOverflowError(finalEmbeddedError.message) && !hasPayloadText) {
     return {
       kind: "final",
+      runId,
       payload: {
         text: "⚠️ Context overflow — this conversation is too large for the model. Use /new to start a fresh session.",
       },
+      errorInfo: { message: finalEmbeddedError.message, errorType: "context_overflow" },
     };
   }
 

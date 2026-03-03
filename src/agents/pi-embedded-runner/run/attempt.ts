@@ -2636,8 +2636,6 @@ export async function runEmbeddedAttempt(
         session: activeSession,
         runId: params.runId,
         captureContent,
-        sessionKey: params.sessionKey ?? params.sessionId,
-        sessionId: params.sessionId,
         channel: params.messageChannel,
         hookRunner: getGlobalHookRunner() ?? undefined,
         verboseLevel: params.verboseLevel,
