@@ -1,4 +1,3 @@
-import path from "node:path";
 import { getAcpSessionManager } from "../acp/control-plane/manager.js";
 import { resolveAcpAgentPolicyError, resolveAcpDispatchPolicyError } from "../acp/policy.js";
 import { toAcpRuntimeError } from "../acp/runtime/errors.js";
@@ -68,8 +67,8 @@ import {
   emitAgentEvent,
   registerAgentRunContext,
 } from "../infra/agent-events.js";
-import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
+import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 import { getRemoteSkillEligibility } from "../infra/skills-remote.js";
 import { logMessageQueued, logMessageProcessed } from "../logging/diagnostic.js";
 import { normalizeAgentId } from "../routing/session-key.js";

@@ -11,16 +11,16 @@ vi.mock("../agents/model-catalog.js", () => ({
   loadModelCatalog: vi.fn(),
 }));
 
-import type { OpenClawConfig } from "../config/config.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
+import type { OpenClawConfig } from "../config/config.js";
 import * as configModule from "../config/config.js";
 import {
   onDiagnosticEvent,
   resetDiagnosticEventsForTest,
   type DiagnosticEventPayload,
 } from "../infra/diagnostic-events.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { agentCommand } from "./agent.js";
 
 const runtime: RuntimeEnv = {
