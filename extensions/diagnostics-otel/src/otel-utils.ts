@@ -1,8 +1,8 @@
+import fs from "node:fs";
 import type { Span, SpanContext } from "@opentelemetry/api";
 import type { ExportResult } from "@opentelemetry/core";
-import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { ExportResultCode, hrTimeToMilliseconds } from "@opentelemetry/core";
-import fs from "node:fs";
+import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
 
 export const DEFAULT_SERVICE_NAME = "openclaw";
 export const OTEL_DEBUG_ENV = "OPENCLAW_OTEL_DEBUG";

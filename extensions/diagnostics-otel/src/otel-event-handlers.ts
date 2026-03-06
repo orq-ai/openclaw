@@ -1,4 +1,3 @@
-import type { DiagnosticEventPayload } from "openclaw/plugin-sdk";
 import {
   context,
   isSpanContextValid,
@@ -8,6 +7,7 @@ import {
   type Span,
   type Tracer,
 } from "@opentelemetry/api";
+import type { DiagnosticEventPayload } from "openclaw/plugin-sdk";
 import type { OtelMetricInstruments } from "./otel-metrics.js";
 import type { ActiveTrace, ResolvedCaptureContent, TraceHeaders } from "./otel-utils.js";
 import { formatTraceparent, mapProviderName } from "./otel-utils.js";
