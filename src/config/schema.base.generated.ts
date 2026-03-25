@@ -119,6 +119,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                   },
                   {
                     type: "string",
+                    const: "http/json",
+                  },
+                  {
+                    type: "string",
                     const: "grpc",
                   },
                 ],
@@ -153,6 +157,34 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                 type: "integer",
                 minimum: 0,
                 maximum: 9007199254740991,
+              },
+              captureContent: {
+                anyOf: [
+                  {
+                    type: "boolean",
+                  },
+                  {
+                    type: "object",
+                    properties: {
+                      inputMessages: {
+                        type: "boolean",
+                      },
+                      outputMessages: {
+                        type: "boolean",
+                      },
+                      systemInstructions: {
+                        type: "boolean",
+                      },
+                      toolDefinitions: {
+                        type: "boolean",
+                      },
+                      toolContent: {
+                        type: "boolean",
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                ],
               },
             },
             additionalProperties: false,

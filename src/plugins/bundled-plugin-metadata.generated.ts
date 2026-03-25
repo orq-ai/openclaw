@@ -2582,6 +2582,51 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
     },
   },
   {
+    dirName: "orq",
+    idHint: "orq",
+    source: {
+      source: "./src/index.ts",
+      built: "src/index.js",
+    },
+    packageName: "@openclaw/orq-provider",
+    packageVersion: "2026.3.25",
+    packageDescription:
+      "OpenClaw Orq AI provider plugin — routes requests through the Orq AI router",
+    packageManifest: {
+      extensions: ["./src/index.ts"],
+      install: {
+        minHostVersion: ">=2026.3.22",
+      },
+    },
+    manifest: {
+      id: "orq",
+      configSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {},
+      },
+      providers: ["orq"],
+      providerAuthEnvVars: {
+        orq: ["ORQ_API_KEY"],
+      },
+      providerAuthChoices: [
+        {
+          provider: "orq",
+          method: "api-key",
+          choiceId: "orq-api-key",
+          choiceLabel: "Orq AI API key",
+          groupId: "orq",
+          groupLabel: "Orq AI Router",
+          groupHint: "OpenAI-compatible router",
+          optionKey: "orqApiKey",
+          cliFlag: "--orq-api-key",
+          cliOption: "--orq-api-key <key>",
+          cliDescription: "Orq API key",
+        },
+      ],
+    },
+  },
+  {
     dirName: "perplexity",
     idHint: "perplexity-plugin",
     source: {

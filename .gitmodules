@@ -1,0 +1,3 @@
+[submodule "extensions/orq"]
+	path = extensions/orq
+	url = https://github.com/orq-ai/openclaw-orq-provider.git
