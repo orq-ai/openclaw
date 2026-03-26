@@ -13,4 +13,5 @@ export type {
   OpenClawPluginServiceContext,
 } from "../plugins/types.js";
 export { resolveAgentIdFromSessionKey } from "../routing/session-key.js";
+export { isSubagentSessionKey } from "../sessions/session-key-utils.js";
 export { resolveAgentIdentity } from "../agents/identity.js";

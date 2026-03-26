@@ -41,6 +41,7 @@ import {
   recordRunAttempt,
   recordToolExecution,
   recordHeartbeat,
+  recordSubagentSpawned,
   type AgentInfo,
   type OtelHandlerCtx,
 } from "./otel-event-handlers.js";
@@ -126,6 +127,18 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
   // child spans (agent.turn, LLM calls, tool executions) are nested under it.
   const activeTraces = new Map<string, ActiveTrace>();
   const ACTIVE_TRACE_TTL_MS = 10 * 60 * 1000;
+
+  // Subagent wrapper spans keyed by childSessionKey. Created by subagent.spawned,
+  // consumed by message.queued to nest the child's trace under the parent.
+  const subagentContexts = new Map<
+    string,
+    {
+      wrapperSpan: Span;
+      context: ReturnType<typeof context.active>;
+      createdAt: number;
+      parentSessionKey?: string;
+    }
+  >();
 
   return {
     id: "diagnostics-otel",
@@ -404,7 +417,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         }
       };
 
-      const runSpans = new Map<string, { span: Span; createdAt: number }>();
+      const runSpans = new Map<string, { span: Span; createdAt: number; sessionKey?: string }>();
       const RUN_SPAN_TTL_MS = 10 * 60 * 1000;
       const inferenceSpans = new Map<string, { span: Span; createdAt: number }>();
       const INFERENCE_SPAN_TTL_MS = 10 * 60 * 1000;
@@ -416,7 +429,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         parentCtx?: ReturnType<typeof context.active>,
       ) => {
         const spanAttrs: Record<string, string | number> = {
-          "gen_ai.operation.name": "execute_tool",
+          "gen_ai.operation.name": evt.toolName,
           "gen_ai.tool.name": evt.toolName,
           "gen_ai.tool.type": evt.toolType ?? "function",
         };
@@ -441,7 +454,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
           }
         }
 
-        const spanName = `execute_tool ${evt.toolName}`;
+        const spanName = evt.toolName;
         const span = spanWithDuration(
           spanName,
           spanAttrs,
@@ -522,11 +535,16 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         }
         spanAttrs["gen_ai.operation.name"] = "invoke_agent";
 
-        // Parent under root trace span if available (created by message.queued)
+        // Parent under root trace span if available (created by message.queued),
+        // or under the subagent wrapper span if this is a subagent run.
         const rootTrace = params.sessionKey ? activeTraces.get(params.sessionKey) : undefined;
+        const subagentWrapper =
+          !rootTrace && params.sessionKey ? subagentContexts.get(params.sessionKey) : undefined;
         const parentCtx = rootTrace
           ? trace.setSpan(context.active(), rootTrace.span)
-          : context.active();
+          : subagentWrapper
+            ? subagentWrapper.context
+            : context.active();
 
         const spanName = agentInfo?.name ? `invoke_agent ${agentInfo.name}` : "invoke_agent";
         const span = tracer.startSpan(
@@ -538,7 +556,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
           },
           parentCtx,
         );
-        runSpans.set(runId, { span, createdAt: Date.now() });
+        runSpans.set(runId, { span, createdAt: Date.now(), sessionKey: params.sessionKey });
 
         // Store W3C trace headers for propagation to downstream LLM providers
         if (params.sessionKey) {
@@ -578,6 +596,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         TRACE_ATTRS,
         getTraceHeadersRegistry,
         redactText: redactSensitiveText,
+        subagentContexts,
       };
 
       // Periodic cleanup of orphaned buffer entries
@@ -624,6 +643,18 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
               // ignore
             }
             activeTraces.delete(key);
+          }
+        }
+        // Clean up stale subagent wrapper spans
+        for (const [key, entry] of subagentContexts) {
+          if (now - entry.createdAt > ACTIVE_TRACE_TTL_MS) {
+            try {
+              entry.wrapperSpan.setStatus({ code: SpanStatusCode.ERROR, message: "TTL expired" });
+              entry.wrapperSpan.end();
+            } catch {
+              // ignore
+            }
+            subagentContexts.delete(key);
           }
         }
         // Clean up orphaned trace headers whose session has no active trace or run span
@@ -690,6 +721,9 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
             case "tool.execution":
               recordToolExecution(hctx, evt);
               return;
+            case "subagent.spawned":
+              recordSubagentSpawned(hctx, evt);
+              return;
           }
         } catch (err) {
           ctx.logger.error(
@@ -713,6 +747,17 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         }
       }
       activeTraces.clear();
+
+      // End any remaining subagent wrapper spans
+      for (const [, entry] of subagentContexts) {
+        try {
+          entry.wrapperSpan.setStatus({ code: SpanStatusCode.ERROR, message: "Service stopped" });
+          entry.wrapperSpan.end();
+        } catch {
+          // Ignore errors during cleanup
+        }
+      }
+      subagentContexts.clear();
 
       unsubscribe?.();
       unsubscribe = null;

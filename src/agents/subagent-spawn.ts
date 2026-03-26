@@ -9,6 +9,7 @@ import {
   pruneLegacyStoreKeys,
   resolveGatewaySessionStoreTarget,
 } from "../gateway/session-utils.js";
+import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import {
   isValidAgentId,
@@ -654,6 +655,15 @@ export async function spawnSubagentDirect(
       workspaceDir: _workspaceDir,
       ...publicSpawnedMetadata
     } = spawnedMetadata;
+    // Emit before callGateway so the OTEL wrapper span exists when the
+    // child's message.queued fires inside the gateway request handler.
+    emitDiagnosticEvent({
+      type: "subagent.spawned",
+      parentSessionKey: requesterInternalKey,
+      childSessionKey,
+      childRunId,
+      agentId: targetAgentId,
+    });
     const response = await callGateway<{ runId: string }>({
       method: "agent",
       params: {

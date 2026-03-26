@@ -453,10 +453,10 @@ describe("diagnostics-otel service – content capture & tools", () => {
     });
 
     const spanCall = telemetryState.tracer.startSpan.mock.calls[0];
-    expect(spanCall[0]).toBe("execute_tool web_search");
+    expect(spanCall[0]).toBe("web_search");
 
     const attrs = (spanCall[1] as any)?.attributes;
-    expect(attrs["gen_ai.operation.name"]).toBe("execute_tool");
+    expect(attrs["gen_ai.operation.name"]).toBe("web_search");
     expect(attrs["gen_ai.tool.name"]).toBe("web_search");
     expect(attrs["gen_ai.tool.type"]).toBe("function");
     expect(attrs["gen_ai.tool.call.id"]).toBe("call_xyz");

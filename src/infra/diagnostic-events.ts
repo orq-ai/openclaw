@@ -282,6 +282,14 @@ export type DiagnosticToolExecutionEvent = DiagnosticBaseEvent & {
   toolOutput?: unknown;
 };
 
+export type DiagnosticSubagentSpawnedEvent = DiagnosticBaseEvent & {
+  type: "subagent.spawned";
+  parentSessionKey: string;
+  childSessionKey: string;
+  childRunId?: string;
+  agentId: string;
+};
+
 export type DiagnosticModelUsageEvent = DiagnosticBaseEvent & {
   type: "model.usage";
   sessionKey?: string;
@@ -330,6 +338,7 @@ export type DiagnosticEventPayload =
   | DiagnosticHeartbeatEvent
   | DiagnosticToolLoopEvent
   | DiagnosticToolExecutionEvent
+  | DiagnosticSubagentSpawnedEvent
   | DiagnosticModelUsageEvent;
 
 export type DiagnosticEventInput = DiagnosticEventPayload extends infer Event

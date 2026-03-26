@@ -25,7 +25,7 @@ export interface OtelHandlerCtx {
   debugExports: boolean;
   logger: { info(msg: string): void };
   activeTraces: Map<string, ActiveTrace>;
-  runSpans: Map<string, { span: Span; createdAt: number }>;
+  runSpans: Map<string, { span: Span; createdAt: number; sessionKey?: string }>;
   inferenceSpans: Map<string, { span: Span; createdAt: number }>;
   activeInferenceSpanByRunId: Map<string, Span>;
   runProviderByRunId: Map<string, string>;
@@ -55,6 +55,16 @@ export interface OtelHandlerCtx {
   };
   getTraceHeadersRegistry: () => Map<string, TraceHeaders>;
   redactText: (text: string) => string;
+  // Maps childSessionKey → wrapper span context so subagent traces nest under the parent.
+  subagentContexts: Map<
+    string,
+    {
+      wrapperSpan: Span;
+      context: ReturnType<typeof context.active>;
+      createdAt: number;
+      parentSessionKey?: string;
+    }
+  >;
 }
 
 export function recordRunCompleted(
@@ -180,8 +190,45 @@ export function recordRunCompleted(
   finalRunSpan.end();
   hctx.runSpans.delete(evt.runId);
   hctx.runProviderByRunId.delete(evt.runId);
+
   if (evt.sessionKey) {
     hctx.getTraceHeadersRegistry().delete(evt.sessionKey);
+
+    // End the subagent wrapper span if this was a subagent run.
+    const subagentCtx = hctx.subagentContexts.get(evt.sessionKey);
+    if (subagentCtx) {
+      subagentCtx.wrapperSpan.end();
+      hctx.subagentContexts.delete(evt.sessionKey);
+    }
+
+    // When a parent run completes, end any child subagent spans spawned by
+    // this parent. The subagent's own run.completed doesn't always fire
+    // through this handler, so we clean up from the parent side.
+    for (const [key, ctx] of hctx.subagentContexts) {
+      if (ctx.parentSessionKey === evt.sessionKey) {
+        // End the subagent's invoke_agent span (from runSpans) if still open.
+        for (const [runId, runEntry] of hctx.runSpans) {
+          if (runEntry.sessionKey === key) {
+            try {
+              runEntry.span.end();
+            } catch {
+              // ignore
+            }
+            hctx.runSpans.delete(runId);
+            hctx.runProviderByRunId.delete(runId);
+            break;
+          }
+        }
+        // End the wrapper span.
+        try {
+          ctx.wrapperSpan.end();
+        } catch {
+          // ignore
+        }
+        hctx.subagentContexts.delete(key);
+        hctx.getTraceHeadersRegistry().delete(key);
+      }
+    }
   }
 }
 
@@ -512,16 +559,25 @@ export function recordMessageQueued(
   if (hctx.tracesEnabled && evt.sessionKey) {
     const agentId = evt.sessionKey.split(":")[1] || "unknown";
 
-    const rootSpan = hctx.tracer.startSpan("openclaw.message", {
-      kind: SpanKind.SERVER,
-      attributes: {
-        "openclaw.sessionKey": evt.sessionKey,
-        "openclaw.channel": evt.channel ?? "unknown",
-        "openclaw.source": evt.source ?? "unknown",
-        ...(typeof evt.queueDepth === "number" ? { "openclaw.queueDepth": evt.queueDepth } : {}),
-        [hctx.TRACE_ATTRS.SESSION_ID]: evt.sessionKey,
+    // If this session was spawned as a subagent, nest under the parent's wrapper span
+    // so the entire subagent trace appears as a child in the parent's trace.
+    const subagentCtx = hctx.subagentContexts.get(evt.sessionKey);
+    const parentCtx = subagentCtx?.context;
+
+    const rootSpan = hctx.tracer.startSpan(
+      "openclaw.message",
+      {
+        kind: SpanKind.SERVER,
+        attributes: {
+          "openclaw.sessionKey": evt.sessionKey,
+          "openclaw.channel": evt.channel ?? "unknown",
+          "openclaw.source": evt.source ?? "unknown",
+          ...(typeof evt.queueDepth === "number" ? { "openclaw.queueDepth": evt.queueDepth } : {}),
+          [hctx.TRACE_ATTRS.SESSION_ID]: evt.sessionKey,
+        },
       },
-    });
+      parentCtx,
+    );
 
     const traceContext = trace.setSpan(context.active(), rootSpan);
 
@@ -585,6 +641,14 @@ export function recordMessageProcessed(
     activeTrace.span.end();
     hctx.activeTraces.delete(sessionKey!);
     hctx.getTraceHeadersRegistry().delete(sessionKey!);
+
+    // End the subagent wrapper span if this was a subagent session.
+    const subagentCtx = hctx.subagentContexts.get(sessionKey!);
+    if (subagentCtx) {
+      subagentCtx.wrapperSpan.end();
+      hctx.subagentContexts.delete(sessionKey!);
+    }
+
     if (hctx.debugExports) {
       hctx.logger.info(`diagnostics-otel: ended root span for session=${sessionKey}`);
     }
@@ -671,23 +735,17 @@ export function recordToolExecution(
     return;
   }
 
-  // Nest tool span under root message.process span (via activeTraces)
-  // or fallback to run/inference spans if activeTrace not found
-  const activeTrace = evt.sessionKey ? hctx.activeTraces.get(evt.sessionKey) : null;
-  if (activeTrace) {
-    hctx.createToolSpan(evt, activeTrace.context);
-    return;
-  }
-
-  // Fallback: try run/inference spans
+  // Parent tool spans under the run span so they appear interleaved with
+  // inference spans in the correct temporal order. Fall back to root trace
+  // span if no run span exists yet.
   const runId = evt.runId;
-  const inferenceSpan = runId ? hctx.activeInferenceSpanByRunId.get(runId) : undefined;
   const runEntry = runId ? hctx.runSpans.get(runId) : undefined;
-  const parentSpan = inferenceSpan ?? runEntry?.span;
+  const activeTrace = evt.sessionKey ? hctx.activeTraces.get(evt.sessionKey) : null;
+  const parentSpan = runEntry?.span ?? activeTrace?.span;
   const parentCtx = parentSpan ? trace.setSpan(context.active(), parentSpan) : undefined;
   hctx.createToolSpan(evt, parentCtx);
 
-  if (hctx.debugExports && !activeTrace && !parentCtx) {
+  if (hctx.debugExports && !parentCtx) {
     hctx.logger.info(
       `diagnostics-otel: no active trace for tool.execution sessionKey=${evt.sessionKey} tool=${evt.toolName}`,
     );
@@ -699,4 +757,82 @@ export function recordHeartbeat(
   evt: Extract<DiagnosticEventPayload, { type: "diagnostic.heartbeat" }>,
 ): void {
   hctx.metrics.queueDepthHistogram.record(evt.queued, { "openclaw.channel": "heartbeat" });
+}
+
+export function recordSubagentSpawned(
+  hctx: OtelHandlerCtx,
+  evt: Extract<DiagnosticEventPayload, { type: "subagent.spawned" }>,
+): void {
+  if (!hctx.tracesEnabled) {
+    return;
+  }
+
+  // Find the parent's active trace to nest the subagent under.
+  // The parentSessionKey from subagent-spawn may be a short form like "main"
+  // while activeTraces is keyed by the full form like "agent:main:main".
+  // Try exact match first, then fall back to suffix match.
+  let parentTrace = hctx.activeTraces.get(evt.parentSessionKey);
+  if (!parentTrace) {
+    const suffix = `:${evt.parentSessionKey}`;
+    for (const [key, trace] of hctx.activeTraces) {
+      if (key.endsWith(suffix)) {
+        parentTrace = trace;
+        break;
+      }
+    }
+  }
+  if (!parentTrace) {
+    if (hctx.debugExports) {
+      hctx.logger.info(
+        `diagnostics-otel: no active parent trace for subagent.spawned parent=${evt.parentSessionKey} child=${evt.childSessionKey}`,
+      );
+    }
+    return;
+  }
+
+  // Prefer the parent's invoke_agent (run) span over the root openclaw.message span,
+  // so the subagent wrapper appears as a sibling of chat/tool spans under invoke_agent.
+  let parentRunSpan: Span | undefined;
+  const resolvedParentKey = parentTrace.sessionKey;
+  if (resolvedParentKey) {
+    for (const entry of hctx.runSpans.values()) {
+      if (entry.sessionKey === resolvedParentKey) {
+        parentRunSpan = entry.span;
+        break;
+      }
+    }
+  }
+  const parentCtx = parentRunSpan
+    ? trace.setSpan(context.active(), parentRunSpan)
+    : parentTrace.context;
+
+  // Create a wrapper span under the parent's invoke_agent so the subagent's
+  // entire span tree (invoke_agent → LLM/tool spans) appears as a child.
+  const wrapperSpan = hctx.tracer.startSpan(
+    `openclaw.subagent ${evt.agentId}`,
+    {
+      kind: SpanKind.INTERNAL,
+      attributes: {
+        "openclaw.parent.sessionKey": evt.parentSessionKey,
+        "openclaw.childSessionKey": evt.childSessionKey,
+        "gen_ai.agent.id": evt.agentId,
+        ...(evt.childRunId ? { "openclaw.childRunId": evt.childRunId } : {}),
+      },
+    },
+    parentCtx,
+  );
+
+  const wrapperCtx = trace.setSpan(context.active(), wrapperSpan);
+  hctx.subagentContexts.set(evt.childSessionKey, {
+    wrapperSpan,
+    context: wrapperCtx,
+    createdAt: Date.now(),
+    parentSessionKey: parentTrace.sessionKey,
+  });
+
+  if (hctx.debugExports) {
+    hctx.logger.info(
+      `diagnostics-otel: created subagent wrapper span for child=${evt.childSessionKey} under parent=${evt.parentSessionKey}`,
+    );
+  }
 }

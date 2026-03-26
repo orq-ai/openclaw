@@ -339,12 +339,12 @@ describe("diagnostics-otel service – span hierarchy", () => {
     const parentSpan = telemetryState.tracer.startSpan.mock.results[0]?.value;
 
     // Tool spans should have been created with a parent context derived from the run span
-    expect(calls[1][0]).toBe("execute_tool web_search");
+    expect(calls[1][0]).toBe("web_search");
     const toolParentCtx1 = calls[1][2] as { _type: string; _span: unknown };
     expect(toolParentCtx1._type).toBe("with-parent");
     expect(toolParentCtx1._span).toBe(parentSpan);
 
-    expect(calls[2][0]).toBe("execute_tool read");
+    expect(calls[2][0]).toBe("read");
     const toolParentCtx2 = calls[2][2] as { _type: string; _span: unknown };
     expect(toolParentCtx2._type).toBe("with-parent");
     expect(toolParentCtx2._span).toBe(parentSpan);
@@ -357,7 +357,7 @@ describe("diagnostics-otel service – span hierarchy", () => {
     await service.stop?.({} as never);
   });
 
-  test("tool spans with matching runId are children of the active inference span when present", async () => {
+  test("tool spans with matching runId are children of the run span (not inference span)", async () => {
     const service = createService();
     await service.start(createTestCtx({ captureContent: true }));
 
@@ -386,16 +386,16 @@ describe("diagnostics-otel service – span hierarchy", () => {
     });
 
     const calls = telemetryState.tracer.startSpan.mock.calls;
-    const inferenceSpan = telemetryState.tracer.startSpan.mock.results.find(
-      (r, idx) => calls[idx]?.[0] === "chat gpt-5.2",
+    const runSpan = telemetryState.tracer.startSpan.mock.results.find((r, idx) =>
+      calls[idx]?.[0]?.startsWith("invoke_agent"),
     )?.value;
-    expect(inferenceSpan).toBeDefined();
+    expect(runSpan).toBeDefined();
 
-    const toolCall = calls.find((c) => c[0] === "execute_tool web_search");
+    const toolCall = calls.find((c) => c[0] === "web_search");
     expect(toolCall).toBeDefined();
     const toolParentCtx = toolCall?.[2] as { _type: string; _span: unknown };
     expect(toolParentCtx._type).toBe("with-parent");
-    expect(toolParentCtx._span).toBe(inferenceSpan);
+    expect(toolParentCtx._span).toBe(runSpan);
 
     emitDiagnosticEvent({
       type: "model.inference",
@@ -426,7 +426,7 @@ describe("diagnostics-otel service – span hierarchy", () => {
 
     // Span should be created immediately (no buffering)
     expect(telemetryState.tracer.startSpan).toHaveBeenCalledTimes(1);
-    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("execute_tool exec");
+    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("exec");
     // No parent context
     expect(telemetryState.tracer.startSpan.mock.calls[0][2]).toBeUndefined();
 
@@ -446,7 +446,7 @@ describe("diagnostics-otel service – span hierarchy", () => {
 
     // Tool span should be created immediately without a parent
     expect(telemetryState.tracer.startSpan).toHaveBeenCalledTimes(1);
-    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("execute_tool web_search");
+    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("web_search");
     expect(telemetryState.tracer.startSpan.mock.calls[0][2]).toBeUndefined();
 
     await service.stop?.({} as never);
@@ -617,6 +617,187 @@ describe("diagnostics-otel service – span hierarchy", () => {
     // Only metrics should be recorded, no span created
     expect(telemetryState.counters.get("openclaw.message.processed")?.add).toHaveBeenCalled();
     expect(telemetryState.tracer.startSpan).not.toHaveBeenCalled();
+
+    await service.stop?.({} as never);
+  });
+
+  test("subagent.spawned creates wrapper span under parent trace", async () => {
+    const service = createService();
+    await service.start(createTestCtx());
+
+    // Parent agent queues a message (creates root trace)
+    emitDiagnosticEvent({
+      type: "message.queued",
+      channel: "telegram",
+      source: "telegram",
+      sessionKey: "agent:main:telegram:dm:123",
+      queueDepth: 1,
+    });
+
+    const parentRootSpan = telemetryState.tracer.startSpan.mock.results[0]?.value;
+    expect(parentRootSpan).toBeDefined();
+
+    // Parent run starts (creates invoke_agent span)
+    emitDiagnosticEvent({
+      type: "run.started",
+      runId: "parent-run-1",
+      sessionKey: "agent:main:telegram:dm:123",
+      sessionId: "sess-parent",
+      channel: "telegram",
+    });
+
+    const parentRunSpan = telemetryState.tracer.startSpan.mock.results.find(
+      (_r: unknown, idx: number) =>
+        telemetryState.tracer.startSpan.mock.calls[idx]?.[0]?.startsWith("invoke_agent"),
+    )?.value;
+    expect(parentRunSpan).toBeDefined();
+
+    // Parent spawns a subagent
+    emitDiagnosticEvent({
+      type: "subagent.spawned",
+      parentSessionKey: "agent:main:telegram:dm:123",
+      childSessionKey: "agent:helper:subagent:550e8400-e29b-41d4-a716-446655440000",
+      childRunId: "child-run-1",
+      agentId: "helper",
+    });
+
+    // Wrapper span should be a child of invoke_agent (run span), not root
+    const calls = telemetryState.tracer.startSpan.mock.calls;
+    const wrapperCall = calls.find((c: unknown[]) => c[0] === "openclaw.subagent helper");
+    expect(wrapperCall).toBeDefined();
+
+    const wrapperParentCtx = wrapperCall?.[2] as { _type: string; _span: unknown };
+    expect(wrapperParentCtx._type).toBe("with-parent");
+    expect(wrapperParentCtx._span).toBe(parentRunSpan);
+
+    const wrapperOpts = wrapperCall?.[1] as { attributes: Record<string, string> };
+    expect(wrapperOpts.attributes["openclaw.parent.sessionKey"]).toBe("agent:main:telegram:dm:123");
+    expect(wrapperOpts.attributes["gen_ai.agent.id"]).toBe("helper");
+
+    await service.stop?.({} as never);
+  });
+
+  test("subagent root span is child of wrapper span", async () => {
+    const service = createService();
+    await service.start(createTestCtx());
+
+    // Parent queues message
+    emitDiagnosticEvent({
+      type: "message.queued",
+      channel: "telegram",
+      source: "telegram",
+      sessionKey: "agent:main:telegram:dm:123",
+      queueDepth: 1,
+    });
+
+    // Parent spawns subagent
+    emitDiagnosticEvent({
+      type: "subagent.spawned",
+      parentSessionKey: "agent:main:telegram:dm:123",
+      childSessionKey: "agent:helper:subagent:sub-uuid-1",
+      agentId: "helper",
+    });
+
+    const wrapperSpan = telemetryState.tracer.startSpan.mock.results.find(
+      (_r: unknown, idx: number) =>
+        telemetryState.tracer.startSpan.mock.calls[idx]?.[0] === "openclaw.subagent helper",
+    )?.value;
+    expect(wrapperSpan).toBeDefined();
+
+    // Subagent's message.queued fires — should nest under wrapper
+    emitDiagnosticEvent({
+      type: "message.queued",
+      channel: "telegram",
+      source: "dispatch",
+      sessionKey: "agent:helper:subagent:sub-uuid-1",
+      queueDepth: 1,
+    });
+
+    const childRootCall = telemetryState.tracer.startSpan.mock.calls.find(
+      (c: unknown[], idx: number) =>
+        c[0] === "openclaw.message" &&
+        idx > 0 && // skip the parent's openclaw.message
+        (c[2] as { _span?: unknown } | undefined)?._span === wrapperSpan,
+    );
+    expect(childRootCall).toBeDefined();
+
+    await service.stop?.({} as never);
+  });
+
+  test("subagent message.processed ends both root and wrapper spans", async () => {
+    const service = createService();
+    await service.start(createTestCtx());
+
+    emitDiagnosticEvent({
+      type: "message.queued",
+      channel: "telegram",
+      source: "telegram",
+      sessionKey: "agent:main:telegram:dm:456",
+      queueDepth: 1,
+    });
+
+    emitDiagnosticEvent({
+      type: "subagent.spawned",
+      parentSessionKey: "agent:main:telegram:dm:456",
+      childSessionKey: "agent:helper:subagent:sub-uuid-2",
+      agentId: "helper",
+    });
+
+    emitDiagnosticEvent({
+      type: "message.queued",
+      channel: "telegram",
+      source: "dispatch",
+      sessionKey: "agent:helper:subagent:sub-uuid-2",
+      queueDepth: 1,
+    });
+
+    const calls = telemetryState.tracer.startSpan.mock.calls;
+    const wrapperSpan = telemetryState.tracer.startSpan.mock.results.find(
+      (_r: unknown, idx: number) => calls[idx]?.[0] === "openclaw.subagent helper",
+    )?.value;
+    const childRootSpan = telemetryState.tracer.startSpan.mock.results.find(
+      (_r: unknown, idx: number) =>
+        calls[idx]?.[0] === "openclaw.message" &&
+        (calls[idx]?.[2] as { _span?: unknown } | undefined)?._span === wrapperSpan,
+    )?.value;
+
+    expect(wrapperSpan).toBeDefined();
+    expect(childRootSpan).toBeDefined();
+
+    // Process the subagent's message
+    emitDiagnosticEvent({
+      type: "message.processed",
+      channel: "telegram",
+      sessionKey: "agent:helper:subagent:sub-uuid-2",
+      outcome: "completed",
+      durationMs: 500,
+    });
+
+    // Both the child root span and the wrapper span should be ended
+    expect(childRootSpan.end).toHaveBeenCalled();
+    expect(wrapperSpan.end).toHaveBeenCalled();
+
+    await service.stop?.({} as never);
+  });
+
+  test("subagent.spawned without active parent trace is a no-op", async () => {
+    const service = createService();
+    await service.start(createTestCtx());
+
+    // No parent message.queued — spawned event should not crash
+    emitDiagnosticEvent({
+      type: "subagent.spawned",
+      parentSessionKey: "agent:main:nonexistent",
+      childSessionKey: "agent:helper:subagent:orphan-uuid",
+      agentId: "helper",
+    });
+
+    // No wrapper span should be created
+    const calls = telemetryState.tracer.startSpan.mock.calls;
+    const wrapperCall = calls.find((c: unknown[]) =>
+      (c[0] as string).startsWith("openclaw.subagent"),
+    );
+    expect(wrapperCall).toBeUndefined();
 
     await service.stop?.({} as never);
   });
