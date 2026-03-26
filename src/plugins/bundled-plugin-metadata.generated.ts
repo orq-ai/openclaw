@@ -2617,7 +2617,7 @@ export const GENERATED_BUNDLED_PLUGIN_METADATA = [
           choiceLabel: "Orq AI API key",
           groupId: "orq",
           groupLabel: "Orq AI Router",
-          groupHint: "OpenAI-compatible router",
+          groupHint: "API key",
           optionKey: "orqApiKey",
           cliFlag: "--orq-api-key",
           cliOption: "--orq-api-key <key>",
