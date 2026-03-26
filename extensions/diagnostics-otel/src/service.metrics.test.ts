@@ -123,8 +123,8 @@ vi.mock("@opentelemetry/semantic-conventions", () => ({
   ATTR_SERVICE_NAME: "service.name",
 }));
 
-vi.mock("openclaw/plugin-sdk", async () => {
-  const actual = await vi.importActual<typeof import("openclaw/plugin-sdk")>("openclaw/plugin-sdk");
+vi.mock("../api.js", async () => {
+  const actual = await vi.importActual<typeof import("../api.js")>("../api.js");
   return {
     ...actual,
     registerLogTransport: registerLogTransportMock,

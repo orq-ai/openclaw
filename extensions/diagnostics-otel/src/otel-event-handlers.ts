@@ -7,7 +7,7 @@ import {
   type Span,
   type Tracer,
 } from "@opentelemetry/api";
-import type { DiagnosticEventPayload } from "openclaw/plugin-sdk";
+import type { DiagnosticEventPayload } from "../api.js";
 import type { OtelMetricInstruments } from "./otel-metrics.js";
 import type { ActiveTrace, ResolvedCaptureContent, TraceHeaders } from "./otel-utils.js";
 import { formatTraceparent, mapProviderName } from "./otel-utils.js";
@@ -54,6 +54,7 @@ export interface OtelHandlerCtx {
     SESSION_ID: string;
   };
   getTraceHeadersRegistry: () => Map<string, TraceHeaders>;
+  redactText: (text: string) => string;
 }
 
 export function recordRunCompleted(
@@ -621,7 +622,7 @@ export function recordSessionState(
 ): void {
   const attrs: Record<string, string> = { "openclaw.state": evt.state };
   if (evt.reason) {
-    attrs["openclaw.reason"] = evt.reason;
+    attrs["openclaw.reason"] = hctx.redactText(evt.reason);
   }
   hctx.metrics.sessionStateCounter.add(1, attrs);
 }

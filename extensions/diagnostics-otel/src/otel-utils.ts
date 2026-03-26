@@ -17,7 +17,10 @@ export function resolveOtelUrl(endpoint: string | undefined, path: string): stri
   if (!endpoint) {
     return undefined;
   }
-  if (endpoint.includes("/v1/")) {
+  // Only skip appending when the endpoint already contains a signal-specific
+  // OTLP path (e.g. /v1/traces, /v1/metrics, /v1/logs). A generic /v1/ substring
+  // elsewhere in the URL (e.g. /api/v1/private/otel) must not short-circuit.
+  if (/\/v1\/(traces|metrics|logs)(\/|\?|$)/i.test(endpoint)) {
     return endpoint;
   }
   return `${endpoint}/${path}`;

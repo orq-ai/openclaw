@@ -1,4 +1,3 @@
-import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { emitAgentEvent, getAgentRunContext } from "../infra/agent-events.js";
 import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
@@ -12,6 +11,7 @@ import {
   consumePendingToolMediaReply,
   hasAssistantVisibleReply,
 } from "./pi-embedded-subscribe.handlers.messages.js";
+import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { isAssistantMessage } from "./pi-embedded-utils.js";
 
 export {

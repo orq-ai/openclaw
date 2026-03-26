@@ -6,6 +6,7 @@ export { emitDiagnosticEvent, onDiagnosticEvent } from "../infra/diagnostic-even
 export { registerLogTransport } from "../logging/logger.js";
 export { redactSensitiveText } from "../logging/redact.js";
 export { emptyPluginConfigSchema } from "../plugins/config-schema.js";
+export type { OpenClawConfig } from "../config/config.js";
 export type {
   OpenClawPluginApi,
   OpenClawPluginService,

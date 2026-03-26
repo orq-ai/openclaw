@@ -1,6 +1,5 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
-import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
@@ -15,6 +14,7 @@ import {
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
 import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
+import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
 import type { EmbeddedPiSubscribeState } from "./pi-embedded-subscribe.handlers.types.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
