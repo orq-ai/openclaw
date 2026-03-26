@@ -162,6 +162,10 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
       if (!tracesEnabled && !metricsEnabled && !logsEnabled) {
         return;
       }
+
+      ctx.logger.info(
+        `diagnostics-otel: starting (endpoint=${endpoint ?? "default"}, protocol=${protocol}, traces=${tracesEnabled}, metrics=${metricsEnabled}, logs=${logsEnabled})`,
+      );
       if (debugExports) {
         ctx.logger.info(
           `diagnostics-otel: debug enabled (traces=${tracesEnabled}, metrics=${metricsEnabled}, logs=${logsEnabled})`,
