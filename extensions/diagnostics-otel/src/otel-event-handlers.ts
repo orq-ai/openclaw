@@ -201,34 +201,12 @@ export function recordRunCompleted(
       hctx.subagentContexts.delete(evt.sessionKey);
     }
 
-    // When a parent run completes, end any child subagent spans spawned by
-    // this parent. The subagent's own run.completed doesn't always fire
-    // through this handler, so we clean up from the parent side.
-    for (const [key, ctx] of hctx.subagentContexts) {
-      if (ctx.parentSessionKey === evt.sessionKey) {
-        // End the subagent's invoke_agent span (from runSpans) if still open.
-        for (const [runId, runEntry] of hctx.runSpans) {
-          if (runEntry.sessionKey === key) {
-            try {
-              runEntry.span.end();
-            } catch {
-              // ignore
-            }
-            hctx.runSpans.delete(runId);
-            hctx.runProviderByRunId.delete(runId);
-            break;
-          }
-        }
-        // End the wrapper span.
-        try {
-          ctx.wrapperSpan.end();
-        } catch {
-          // ignore
-        }
-        hctx.subagentContexts.delete(key);
-        hctx.getTraceHeadersRegistry().delete(key);
-      }
-    }
+    // Note: do NOT eagerly end child subagent spans here. Subagents may
+    // still be running when the parent's run.completed fires (the parent
+    // finishes its first turn while subagents continue independently).
+    // Subagent wrapper and invoke_agent spans end via:
+    // - message.processed for the subagent session (primary path)
+    // - TTL cleanup timer (safety net)
   }
 }
 
