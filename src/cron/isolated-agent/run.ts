@@ -38,7 +38,9 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { logWarn } from "../../logger.js";
+import { logMessageProcessed, logMessageQueued } from "../../logging/diagnostic.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import {
   buildSafeExternalPrompt,
@@ -223,6 +225,24 @@ export async function runCronIsolatedAgentTurn(params: {
 
   const baseSessionKey = (params.sessionKey?.trim() || `cron:${params.job.id}`).trim();
   const agentSessionKey = resolveCronAgentSessionKey({ sessionKey: baseSessionKey, agentId });
+
+  const cronDiagnosticsEnabled = isDiagnosticsEnabled(params.cfg);
+  const cronRunStartTime = Date.now();
+  if (cronDiagnosticsEnabled && agentSessionKey) {
+    logMessageQueued({ sessionKey: agentSessionKey, channel: "cron", source: "cron-isolated" });
+  }
+  const emitCronRunProcessed = (result: { status: string; error?: string }) => {
+    if (cronDiagnosticsEnabled && agentSessionKey) {
+      logMessageProcessed({
+        channel: "cron",
+        sessionKey: agentSessionKey,
+        durationMs: Date.now() - cronRunStartTime,
+        outcome: result.status === "ok" ? "completed" : "error",
+        error: result.error,
+      });
+    }
+  };
+
   const payloadHookExternalContentSource =
     params.job.payload.kind === "agentTurn" ? params.job.payload.externalContentSource : undefined;
   const hookExternalContentSource =
@@ -290,6 +310,7 @@ export async function runCronIsolatedAgentTurn(params: {
     isGmailHook,
   });
   if (!resolvedModelSelection.ok) {
+    emitCronRunProcessed({ status: "error", error: resolvedModelSelection.error });
     return { status: "error", error: resolvedModelSelection.error };
   }
   let provider = resolvedModelSelection.provider;
@@ -598,13 +619,16 @@ export async function runCronIsolatedAgentTurn(params: {
       }
     }
   } catch (err) {
+    emitCronRunProcessed({ status: "error", error: String(err) });
     return withRunSession({ status: "error", error: String(err) });
   }
 
   if (isAborted()) {
+    emitCronRunProcessed({ status: "error", error: abortReason() });
     return withRunSession({ status: "error", error: abortReason() });
   }
   if (!runResult) {
+    emitCronRunProcessed({ status: "error", error: "cron isolated run returned no result" });
     return withRunSession({ status: "error", error: "cron isolated run returned no result" });
   }
   const finalRunResult = runResult;
@@ -692,6 +716,7 @@ export async function runCronIsolatedAgentTurn(params: {
   }
 
   if (isAborted()) {
+    emitCronRunProcessed({ status: "error", error: abortReason() });
     return withRunSession({ status: "error", error: abortReason(), ...telemetry });
   }
   let {
@@ -768,17 +793,22 @@ export async function runCronIsolatedAgentTurn(params: {
         deliveryResult.result.deliveryAttempted ?? deliveryResult.deliveryAttempted,
     };
     if (!hasFatalErrorPayload || deliveryResult.result.status !== "ok") {
+      emitCronRunProcessed(resultWithDeliveryMeta);
       return resultWithDeliveryMeta;
     }
-    return resolveRunOutcome({
+    const outcome = resolveRunOutcome({
       delivered: deliveryResult.result.delivered,
       deliveryAttempted: resultWithDeliveryMeta.deliveryAttempted,
     });
+    emitCronRunProcessed(outcome);
+    return outcome;
   }
   const delivered = deliveryResult.delivered;
   const deliveryAttempted = deliveryResult.deliveryAttempted;
   summary = deliveryResult.summary;
   outputText = deliveryResult.outputText;
 
-  return resolveRunOutcome({ delivered, deliveryAttempted });
+  const finalOutcome = resolveRunOutcome({ delivered, deliveryAttempted });
+  emitCronRunProcessed(finalOutcome);
+  return finalOutcome;
 }
