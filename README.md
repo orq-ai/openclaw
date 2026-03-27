@@ -32,7 +32,12 @@ New install? Start here: [Getting started](https://docs.openclaw.ai/start/gettin
 
 ## Installing the orq-ai fork
 
-This fork adds the [orq.ai](https://orq.ai) provider plugin. To install it from source:
+This fork adds two main features on top of upstream OpenClaw:
+
+1. **OpenTelemetry (OTEL) tracing** — built-in diagnostics that emit spans for gateway operations, agent runs, subagent lifecycles, hooks, and cron jobs, giving you full observability into your assistant's behavior.
+2. **[orq.ai](https://orq.ai) provider plugin** — access 45+ models (OpenAI, Anthropic, Google, Groq, DeepSeek, and more) through a single orq.ai API key.
+
+To install it from source:
 
 ```bash
 git clone --recurse-submodules https://github.com/orq-ai/openclaw.git
@@ -43,7 +48,87 @@ pnpm ui:build   # auto-installs UI deps on first run
 pnpm build
 ```
 
-Then run onboarding with your Orq API key (get one at [cloud.orq.ai](https://cloud.orq.ai)):
+### Setting up OpenTelemetry tracing
+
+The `diagnostics-otel` plugin ships traces, metrics, and logs to any OTLP-compatible collector. To send telemetry to orq.ai:
+
+**1. Enable the plugin**
+
+```bash
+openclaw plugins enable diagnostics-otel
+```
+
+**2. Configure the OTEL exporter** in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "diagnostics": {
+    "enabled": true,
+    "otel": {
+      "enabled": true,
+      "endpoint": "https://api.orq.ai/v2/otel",
+      "protocol": "http/protobuf",
+      "headers": {
+        "Authorization": "Bearer <ORQ_API_KEY>"
+      },
+      "serviceName": "openclaw",
+      "traces": true,
+      "metrics": true,
+      "logs": false,
+      "sampleRate": 1,
+      "flushIntervalMs": 5000
+    }
+  }
+}
+```
+
+Or configure via environment variables (config file settings take precedence):
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.orq.ai/v2/otel"
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <ORQ_API_KEY>"
+export OTEL_SERVICE_NAME="openclaw"
+```
+
+> **Note:** `diagnostics.enabled: true` and the plugin allowlist entry are still required in the config file even when using environment variables.
+
+**Key options:**
+
+| Option            | Default         | Description                                            |
+| ----------------- | --------------- | ------------------------------------------------------ |
+| `enabled`         | `false`         | Master switch for OTEL export                          |
+| `endpoint`        | —               | OTLP collector URL (e.g. `https://api.orq.ai/v2/otel`) |
+| `protocol`        | `http/protobuf` | Transport protocol (`http/protobuf` or `http/json`)    |
+| `traces`          | `true`          | Export trace spans                                     |
+| `metrics`         | `true`          | Export metrics (token usage, cost, latency)            |
+| `logs`            | `false`         | Export structured logs via OTLP                        |
+| `sampleRate`      | `1.0`           | Trace sampling rate (0.0–1.0)                          |
+| `flushIntervalMs` | SDK default     | How often to flush metrics/logs (ms)                   |
+| `captureContent`  | `false`         | Include LLM message content in spans (see below)       |
+| `headers`         | —               | Custom HTTP headers (e.g. auth tokens)                 |
+| `serviceName`     | `openclaw`      | Service name in resource attributes                    |
+
+**Content capture** can be enabled granularly to include sensitive data in spans:
+
+```json
+{
+  "captureContent": {
+    "inputMessages": true,
+    "outputMessages": true,
+    "systemInstructions": false,
+    "toolDefinitions": true,
+    "toolContent": false
+  }
+}
+```
+
+Set `"captureContent": true` to enable all fields at once.
+
+For the full integration guide, see the [orq.ai OpenClaw docs](https://docs.orq.ai/docs/proxy/frameworks/openclaw#openclaw).
+
+### Setting up the orq.ai provider
+
+Run onboarding with your orq.ai API key (get one at [cloud.orq.ai](https://cloud.orq.ai)):
 
 ```bash
 pnpm openclaw onboard --orq-api-key <your-key> --install-daemon
@@ -56,7 +141,7 @@ export ORQ_API_KEY=<your-key>
 pnpm openclaw onboard --install-daemon
 ```
 
-The Orq provider gives you access to 45+ models (OpenAI, Anthropic, Google, Groq, DeepSeek, and more) through a single API key. The default model is `orq/openai/gpt-5.4-mini`. See `extensions/orq/README.md` for the full model list.
+The default model is `orq/openai/gpt-5.4-mini`. See `extensions/orq/README.md` for the full model list and provider details.
 
 **Staying in sync with upstream:**
 
