@@ -121,10 +121,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                     type: "string",
                     const: "http/json",
                   },
-                  {
-                    type: "string",
-                    const: "grpc",
-                  },
                 ],
               },
               headers: {
@@ -12016,12 +12012,12 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     },
     "diagnostics.otel.protocol": {
       label: "OpenTelemetry Protocol",
-      help: 'OTel transport protocol for telemetry export: "http/protobuf" or "grpc" depending on collector support. Use the protocol your observability backend expects to avoid dropped telemetry payloads.',
+      help: 'OTel transport protocol for telemetry export: "http/protobuf" (default) or "http/json". Use the protocol your observability backend expects to avoid dropped telemetry payloads.',
       tags: ["observability"],
     },
     "diagnostics.otel.headers": {
       label: "OpenTelemetry Headers",
-      help: "Additional HTTP/gRPC metadata headers sent with OpenTelemetry export requests, often used for tenant auth or routing. Keep secrets in env-backed values and avoid unnecessary header sprawl.",
+      help: "Additional HTTP headers sent with OpenTelemetry export requests, often used for tenant auth or routing. Keep secrets in env-backed values and avoid unnecessary header sprawl.",
       tags: ["observability"],
     },
     "diagnostics.otel.serviceName": {

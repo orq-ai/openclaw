@@ -430,7 +430,7 @@ const ENUM_EXPECTATIONS: Record<string, string[]> = {
   "browser.profiles.*.driver": ['"openclaw"', '"clawd"', '"existing-session"'],
   "discovery.mdns.mode": ['"off"', '"minimal"', '"full"'],
   "wizard.lastRunMode": ['"local"', '"remote"'],
-  "diagnostics.otel.protocol": ['"http/protobuf"', '"grpc"'],
+  "diagnostics.otel.protocol": ['"http/protobuf"', '"http/json"'],
   "logging.level": ['"silent"', '"fatal"', '"error"', '"warn"', '"info"', '"debug"', '"trace"'],
   "logging.consoleLevel": [
     '"silent"',
