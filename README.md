@@ -30,6 +30,45 @@ OpenClaw Onboard guides you step by step through setting up the gateway, workspa
 Works with npm, pnpm, or bun.
 New install? Start here: [Getting started](https://docs.openclaw.ai/start/getting-started)
 
+## Installing the orq-ai fork
+
+This fork adds the [orq.ai](https://orq.ai) provider plugin. To install it from source:
+
+```bash
+git clone --recurse-submodules https://github.com/orq-ai/openclaw.git
+cd openclaw
+
+pnpm install
+pnpm ui:build   # auto-installs UI deps on first run
+pnpm build
+```
+
+Then run onboarding with your Orq API key (get one at [cloud.orq.ai](https://cloud.orq.ai)):
+
+```bash
+pnpm openclaw onboard --orq-api-key <your-key> --install-daemon
+```
+
+Or set the key via environment variable and run onboarding separately:
+
+```bash
+export ORQ_API_KEY=<your-key>
+pnpm openclaw onboard --install-daemon
+```
+
+The Orq provider gives you access to 45+ models (OpenAI, Anthropic, Google, Groq, DeepSeek, and more) through a single API key. The default model is `orq/openai/gpt-5.4-mini`. See `extensions/orq/README.md` for the full model list.
+
+**Staying in sync with upstream:**
+
+```bash
+git remote add upstream https://github.com/openclaw/openclaw.git
+git fetch upstream
+git rebase upstream/main
+git submodule update --init
+```
+
+For development, use `pnpm gateway:watch` (auto-reloads on source/config changes).
+
 ## Sponsors
 
 | OpenAI                                                            | Vercel                                                            | Blacksmith                                                                   | Convex                                                                |

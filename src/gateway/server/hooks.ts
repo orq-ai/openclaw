@@ -4,8 +4,10 @@ import { loadConfig, type OpenClawConfig } from "../../config/config.js";
 import { resolveMainSessionKeyFromConfig } from "../../config/sessions.js";
 import { runCronIsolatedAgentTurn } from "../../cron/isolated-agent.js";
 import type { CronJob } from "../../cron/types.js";
+import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { requestHeartbeatNow } from "../../infra/heartbeat-wake.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
+import { logMessageProcessed, logMessageQueued } from "../../logging/diagnostic.js";
 import type { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
   normalizeHookDispatchSessionKey,
@@ -76,8 +78,16 @@ export function createGatewayHooksRequestHandler(params: {
 
     const runId = randomUUID();
     void (async () => {
+      const cfg = loadConfig();
+      const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
+      const startTime = Date.now();
+      const channel = value.channel ?? "webhook";
+
+      if (diagnosticsEnabled && sessionKey) {
+        logMessageQueued({ sessionKey, channel, source: "hook-agent" });
+      }
+
       try {
-        const cfg = loadConfig();
         const result = await runCronIsolatedAgentTurn({
           cfg,
           deps,
@@ -87,6 +97,17 @@ export function createGatewayHooksRequestHandler(params: {
           lane: "cron",
           deliveryContract: "shared",
         });
+
+        if (diagnosticsEnabled && sessionKey) {
+          logMessageProcessed({
+            channel,
+            sessionKey,
+            durationMs: Date.now() - startTime,
+            outcome: result.status === "ok" ? "completed" : "error",
+            error: result.error,
+          });
+        }
+
         const summary = result.summary?.trim() || result.error?.trim() || result.status;
         const prefix =
           result.status === "ok" ? `Hook ${value.name}` : `Hook ${value.name} (${result.status})`;
@@ -99,6 +120,16 @@ export function createGatewayHooksRequestHandler(params: {
           }
         }
       } catch (err) {
+        if (diagnosticsEnabled && sessionKey) {
+          logMessageProcessed({
+            channel,
+            sessionKey,
+            durationMs: Date.now() - startTime,
+            outcome: "error",
+            error: String(err),
+          });
+        }
+
         logHooks.warn(`hook agent failed: ${String(err)}`);
         enqueueSystemEvent(`Hook ${value.name} (error): ${String(err)}`, {
           sessionKey: mainSessionKey,

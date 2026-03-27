@@ -17,11 +17,13 @@ import {
   updateSessionStore,
 } from "../../config/sessions.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
   resolveAgentDeliveryPlan,
   resolveAgentOutboundTarget,
 } from "../../infra/outbound/agent-delivery.js";
 import { resolveMessageChannelSelection } from "../../infra/outbound/channel-selection.js";
+import { logMessageProcessed, logMessageQueued } from "../../logging/diagnostic.js";
 import { classifySessionKeyShape, normalizeAgentId } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeInputProvenance, type InputProvenance } from "../../sessions/input-provenance.js";
@@ -149,8 +151,25 @@ function dispatchAgentRunFromGateway(params: {
   respond: GatewayRequestHandlerOptions["respond"];
   context: GatewayRequestHandlerOptions["context"];
 }) {
+  const sessionKey = params.ingressOpts.sessionKey;
+  const channel = params.ingressOpts.messageChannel ?? params.ingressOpts.channel ?? "gateway";
+  const diagnosticsEnabled = isDiagnosticsEnabled(loadConfig());
+  const startTime = Date.now();
+
+  if (diagnosticsEnabled && sessionKey) {
+    logMessageQueued({ sessionKey, channel, source: "gateway-agent" });
+  }
+
   void agentCommandFromIngress(params.ingressOpts, defaultRuntime, params.context.deps)
     .then((result) => {
+      if (diagnosticsEnabled && sessionKey) {
+        logMessageProcessed({
+          channel,
+          sessionKey,
+          durationMs: Date.now() - startTime,
+          outcome: "completed",
+        });
+      }
       const payload = {
         runId: params.runId,
         status: "ok" as const,
@@ -171,6 +190,15 @@ function dispatchAgentRunFromGateway(params: {
       params.respond(true, payload, undefined, { runId: params.runId });
     })
     .catch((err) => {
+      if (diagnosticsEnabled && sessionKey) {
+        logMessageProcessed({
+          channel,
+          sessionKey,
+          durationMs: Date.now() - startTime,
+          outcome: "error",
+          error: String(err),
+        });
+      }
       const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
       const payload = {
         runId: params.runId,
