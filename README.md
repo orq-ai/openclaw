@@ -128,7 +128,7 @@ For the full integration guide, see the [orq.ai OpenClaw docs](https://docs.orq.
 
 ### Setting up the orq.ai provider
 
-Run onboarding with your orq.ai API key (get one at [cloud.orq.ai](https://cloud.orq.ai)):
+Run onboarding with your orq.ai API key (get one at [my.orq.ai](https://my.orq.ai)):
 
 ```bash
 pnpm openclaw onboard --orq-api-key <your-key> --install-daemon
