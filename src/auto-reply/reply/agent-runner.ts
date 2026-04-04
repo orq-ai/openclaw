@@ -42,7 +42,7 @@ import {
   isAudioPayload,
   signalTypingIfNeeded,
 } from "./agent-runner-helpers.js";
-import { runMemoryFlushIfNeeded } from "./agent-runner-memory.js";
+import { runMemoryFlushIfNeeded, runPreflightCompactionIfNeeded } from "./agent-runner-memory.js";
 import { buildReplyPayloads } from "./agent-runner-payloads.js";
 import {
   appendUnscheduledReminderNote,
@@ -259,6 +259,19 @@ export async function runReplyAgent(params: {
   }
 
   await typingSignals.signalRunStart();
+
+  activeSessionEntry = await runPreflightCompactionIfNeeded({
+    cfg,
+    followupRun,
+    promptForEstimate: followupRun.prompt,
+    defaultModel,
+    agentCfgContextTokens,
+    sessionEntry: activeSessionEntry,
+    sessionStore: activeSessionStore,
+    sessionKey,
+    storePath,
+    isHeartbeat,
+  });
 
   activeSessionEntry = await runMemoryFlushIfNeeded({
     cfg,
@@ -529,6 +542,9 @@ export async function runReplyAgent(params: {
     const cliSessionId = isCliProvider(providerUsed, cfg)
       ? runResult.meta?.agentMeta?.sessionId?.trim()
       : undefined;
+    const cliSessionBinding = isCliProvider(providerUsed, cfg)
+      ? runResult.meta?.agentMeta?.cliSessionBinding
+      : undefined;
     const contextTokensUsed =
       agentCfgContextTokens ??
       lookupContextTokens(modelUsed) ??
@@ -547,6 +563,8 @@ export async function runReplyAgent(params: {
       contextTokensUsed,
       systemPromptReport: runResult.meta?.systemPromptReport,
       cliSessionId,
+      cliSessionBinding,
+      usageIsContextSnapshot: isCliProvider(providerUsed, cfg),
     });
 
     if (isDiagnosticsEnabled(cfg)) {
@@ -657,6 +675,7 @@ export async function runReplyAgent(params: {
       payloads: payloadArray,
       isHeartbeat,
       didLogHeartbeatStrip,
+      silentExpected: followupRun.run.silentExpected,
       blockStreamingEnabled,
       blockReplyPipeline,
       directlySentBlockKeys,

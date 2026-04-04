@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { parseReplyDirectives } from "../auto-reply/reply/reply-directives.js";
-import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import {
   emitDiagnosticEvent,
@@ -14,8 +14,11 @@ import {
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
 import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
-import type { EmbeddedPiSubscribeContext } from "./pi-embedded-subscribe.handlers.types.js";
-import type { EmbeddedPiSubscribeState } from "./pi-embedded-subscribe.handlers.types.js";
+import type {
+  EmbeddedPiSubscribeContext,
+  EmbeddedPiSubscribeState,
+} from "./pi-embedded-subscribe.handlers.types.js";
+import { isPromiseLike } from "./pi-embedded-subscribe.promise.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
 import {
   extractAssistantText,
@@ -42,6 +45,31 @@ const stripTrailingDirective = (text: string): string => {
   return text.slice(0, openIndex);
 };
 
+const coerceText = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value == null) {
+    return "";
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint" ||
+    typeof value === "symbol"
+  ) {
+    return String(value);
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value) ?? "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+};
+
 function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage | undefined): boolean {
   if (!message || message.role !== "assistant") {
     return false;
@@ -60,16 +88,17 @@ function emitReasoningEnd(ctx: EmbeddedPiSubscribeContext) {
 }
 
 export function resolveSilentReplyFallbackText(params: {
-  text: string;
+  text: unknown;
   messagingToolSentTexts: string[];
 }): string {
-  const trimmed = params.text.trim();
+  const text = coerceText(params.text);
+  const trimmed = text.trim();
   if (trimmed !== SILENT_REPLY_TOKEN) {
-    return params.text;
+    return text;
   }
-  const fallback = params.messagingToolSentTexts.at(-1)?.trim();
+  const fallback = coerceText(params.messagingToolSentTexts.at(-1)).trim();
   if (!fallback) {
-    return params.text;
+    return text;
   }
   return fallback;
 }
@@ -131,13 +160,15 @@ export function hasAssistantVisibleReply(params: {
 export function buildAssistantStreamData(params: {
   text?: string;
   delta?: string;
+  replace?: boolean;
   mediaUrls?: string[];
   mediaUrl?: string;
-}): { text: string; delta: string; mediaUrls?: string[] } {
+}): { text: string; delta: string; replace?: true; mediaUrls?: string[] } {
   const mediaUrls = resolveSendableOutboundReplyParts(params).mediaUrls;
   return {
     text: params.text ?? "",
     delta: params.delta ?? "",
+    replace: params.replace ? true : undefined,
     mediaUrls: mediaUrls.length ? mediaUrls : undefined,
   };
 }
@@ -332,22 +363,29 @@ export function handleMessageUpdate(
 
     let shouldEmit = false;
     let deltaText = "";
+    let replace = false;
     if (!hasAssistantVisibleReply({ text: cleanedText, mediaUrls, audioAsVoice: hasAudio })) {
       shouldEmit = false;
-    } else if (previousCleaned && !cleanedText.startsWith(previousCleaned)) {
-      shouldEmit = false;
     } else {
-      deltaText = cleanedText.slice(previousCleaned.length);
-      shouldEmit = Boolean(deltaText || hasMedia || hasAudio);
+      replace = Boolean(previousCleaned && !cleanedText.startsWith(previousCleaned));
+      deltaText = replace ? "" : cleanedText.slice(previousCleaned.length);
+      shouldEmit = replace
+        ? cleanedText !== previousCleaned || hasMedia || hasAudio
+        : Boolean(deltaText || hasMedia || hasAudio);
     }
 
     ctx.state.lastStreamedAssistant = next;
     ctx.state.lastStreamedAssistantCleaned = cleanedText;
 
+    if (ctx.params.silentExpected) {
+      shouldEmit = false;
+    }
+
     if (shouldEmit) {
       const data = buildAssistantStreamData({
         text: cleanedText,
         delta: deltaText,
+        replace,
         mediaUrls,
       });
       emitAgentEvent({
@@ -366,12 +404,26 @@ export function handleMessageUpdate(
     }
   }
 
-  if (ctx.params.onBlockReply && ctx.blockChunking && ctx.state.blockReplyBreak === "text_end") {
+  if (
+    !ctx.params.silentExpected &&
+    ctx.params.onBlockReply &&
+    ctx.blockChunking &&
+    ctx.state.blockReplyBreak === "text_end"
+  ) {
     ctx.blockChunker?.drain({ force: false, emit: ctx.emitBlockChunk });
   }
 
-  if (evtType === "text_end" && ctx.state.blockReplyBreak === "text_end") {
-    ctx.flushBlockReplyBuffer();
+  if (
+    !ctx.params.silentExpected &&
+    evtType === "text_end" &&
+    ctx.state.blockReplyBreak === "text_end"
+  ) {
+    const assistantMessageIndex = ctx.state.assistantMessageIndex;
+    void Promise.resolve()
+      .then(() => ctx.flushBlockReplyBuffer({ assistantMessageIndex }))
+      .catch((err) => {
+        ctx.log.debug(`text_end block reply flush failed: ${String(err)}`);
+      });
   }
 }
 
@@ -392,7 +444,7 @@ export function handleMessageEnd(
   }
   promoteThinkingTagsToBlocks(assistantMessage);
 
-  const rawText = extractAssistantText(assistantMessage);
+  const rawText = coerceText(extractAssistantText(assistantMessage));
   appendRawStream({
     ts: Date.now(),
     event: "assistant_message_end",
@@ -417,7 +469,7 @@ export function handleMessageEnd(
   let { mediaUrls, hasMedia } = resolveSendableOutboundReplyParts(parsedText ?? {});
 
   if (!cleanedText && !hasMedia && !ctx.params.enforceFinalTag) {
-    const rawTrimmed = rawText.trim();
+    const rawTrimmed = coerceText(rawText).trim();
     const rawStrippedFinal = rawTrimmed.replace(/<\s*\/?\s*final\s*>/gi, "").trim();
     const rawCandidate = rawStrippedFinal || rawTrimmed;
     if (rawCandidate) {
@@ -427,7 +479,11 @@ export function handleMessageEnd(
     }
   }
 
-  if (!ctx.state.emittedAssistantUpdate && (cleanedText || hasMedia)) {
+  if (
+    !ctx.params.silentExpected &&
+    !ctx.state.emittedAssistantUpdate &&
+    (cleanedText || hasMedia)
+  ) {
     const data = buildAssistantStreamData({
       text: cleanedText,
       delta: cleanedText,
@@ -445,22 +501,20 @@ export function handleMessageEnd(
     ctx.state.emittedAssistantUpdate = true;
   }
 
+  const silentExpectedWithoutSentinel =
+    ctx.params.silentExpected && !isSilentReplyText(trimmedText, SILENT_REPLY_TOKEN);
+  const finalAssistantText = silentExpectedWithoutSentinel ? "" : text;
   const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
-  ctx.finalizeAssistantTexts({ text, addedDuringMessage, chunkerHasBuffered });
+  ctx.finalizeAssistantTexts({
+    text: finalAssistantText,
+    addedDuringMessage,
+    chunkerHasBuffered,
+  });
 
   const onBlockReply = ctx.params.onBlockReply;
-  const emitBlockReplySafely = (payload: Parameters<NonNullable<typeof onBlockReply>>[0]) => {
-    if (!onBlockReply) {
-      return;
-    }
-    void Promise.resolve()
-      .then(() => onBlockReply(payload))
-      .catch((err) => {
-        ctx.log.warn(`block reply callback failed: ${String(err)}`);
-      });
-  };
   const shouldEmitReasoning = Boolean(
+    !ctx.params.silentExpected &&
     ctx.state.includeReasoning &&
     formattedReasoning &&
     onBlockReply &&
@@ -473,7 +527,7 @@ export function handleMessageEnd(
       return;
     }
     ctx.state.lastReasoningSent = formattedReasoning;
-    emitBlockReplySafely({ text: formattedReasoning, isReasoning: true });
+    ctx.emitBlockReply({ text: formattedReasoning, isReasoning: true });
   };
 
   if (shouldEmitReasoningBeforeAnswer) {
@@ -508,6 +562,7 @@ export function handleMessageEnd(
   };
 
   if (
+    !ctx.params.silentExpected &&
     (ctx.state.blockReplyBreak === "message_end" ||
       (ctx.blockChunker ? ctx.blockChunker.hasBuffered() : ctx.state.blockBuffer.length > 0)) &&
     text &&
@@ -538,94 +593,126 @@ export function handleMessageEnd(
   if (!shouldEmitReasoningBeforeAnswer) {
     maybeEmitReasoning();
   }
-  if (ctx.state.streamReasoning && rawThinking) {
+  if (!ctx.params.silentExpected && ctx.state.streamReasoning && rawThinking) {
     ctx.emitReasoningStream(rawThinking);
   }
 
-  if (ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
+  if (!ctx.params.silentExpected && ctx.state.blockReplyBreak === "text_end" && onBlockReply) {
     emitSplitResultAsBlockReply(ctx.consumeReplyDirectives("", { final: true }));
   }
 
-  ctx.state.deltaBuffer = "";
-  ctx.state.blockBuffer = "";
-  ctx.blockChunker?.reset();
-  ctx.state.blockState.thinking = false;
-  ctx.state.blockState.final = false;
-  ctx.state.blockState.inlineCode = createInlineCodeState();
-  ctx.state.lastStreamedAssistant = undefined;
-  ctx.state.lastStreamedAssistantCleaned = undefined;
-  ctx.state.reasoningStreamOpen = false;
+  const finalizeMessageEnd = () => {
+    // Emit OTEL diagnostic event BEFORE resetting state, since it reads
+    // currentMessageStartAt, currentMessageFirstTokenAt, and assistantMessageIndex.
+    const messageStartAt = ctx.state.currentMessageStartAt;
+    const durationMs =
+      typeof messageStartAt === "number" ? Math.max(0, Date.now() - messageStartAt) : undefined;
+    const ttftMs =
+      typeof messageStartAt === "number" && typeof ctx.state.currentMessageFirstTokenAt === "number"
+        ? Math.max(0, ctx.state.currentMessageFirstTokenAt - messageStartAt)
+        : undefined;
 
-  const messageStartAt = ctx.state.currentMessageStartAt;
-  const durationMs =
-    typeof messageStartAt === "number" ? Math.max(0, Date.now() - messageStartAt) : undefined;
-  const ttftMs =
-    typeof messageStartAt === "number" && typeof ctx.state.currentMessageFirstTokenAt === "number"
-      ? Math.max(0, ctx.state.currentMessageFirstTokenAt - messageStartAt)
+    const usage = normalizeUsage({
+      input: (assistantMessage as { usage?: { input?: number } }).usage?.input,
+      output: (assistantMessage as { usage?: { output?: number } }).usage?.output,
+      cacheRead: (assistantMessage as { usage?: { cacheRead?: number } }).usage?.cacheRead,
+      cacheWrite: (assistantMessage as { usage?: { cacheWrite?: number } }).usage?.cacheWrite,
+      total: (assistantMessage as { usage?: { totalTokens?: number } }).usage?.totalTokens,
+    });
+    const promptTokens = derivePromptTokens(usage);
+    const totalTokens =
+      usage?.total ??
+      (typeof promptTokens === "number" && typeof usage?.output === "number"
+        ? promptTokens + usage.output
+        : undefined);
+    const stopReason = (assistantMessage as { stopReason?: string }).stopReason;
+    const finishReasons = stopReason
+      ? [stopReason === "toolUse" ? "tool_call" : stopReason]
       : undefined;
+    const error =
+      stopReason === "error" || stopReason === "aborted"
+        ? ((assistantMessage as { errorMessage?: string }).errorMessage ?? "LLM request failed.")
+        : undefined;
 
-  const usage = normalizeUsage({
-    input: (assistantMessage as { usage?: { input?: number } }).usage?.input,
-    output: (assistantMessage as { usage?: { output?: number } }).usage?.output,
-    cacheRead: (assistantMessage as { usage?: { cacheRead?: number } }).usage?.cacheRead,
-    cacheWrite: (assistantMessage as { usage?: { cacheWrite?: number } }).usage?.cacheWrite,
-    total: (assistantMessage as { usage?: { totalTokens?: number } }).usage?.totalTokens,
-  });
-  const promptTokens = derivePromptTokens(usage);
-  const totalTokens =
-    usage?.total ??
-    (typeof promptTokens === "number" && typeof usage?.output === "number"
-      ? promptTokens + usage.output
-      : undefined);
-  const stopReason = (assistantMessage as { stopReason?: string }).stopReason;
-  const finishReasons = stopReason
-    ? [stopReason === "toolUse" ? "tool_call" : stopReason]
-    : undefined;
-  const error =
-    stopReason === "error" || stopReason === "aborted"
-      ? ((assistantMessage as { errorMessage?: string }).errorMessage ?? "LLM request failed.")
-      : undefined;
+    // Content capture is intentionally opt-in and controlled by diagnostics.otel.captureContent.
+    // When disabled, we still emit timings/usage/errors but omit message content fields.
+    const outputParts =
+      ctx.params.captureContent === true
+        ? buildAssistantParts((assistantMessage as { content?: unknown }).content)
+        : [];
+    const outputMessages: GenAiMessage[] =
+      ctx.params.captureContent === true && outputParts.length
+        ? [
+            {
+              role: "assistant",
+              parts: outputParts,
+              ...(finishReasons?.length ? { finish_reason: finishReasons[0] } : {}),
+            },
+          ]
+        : [];
 
-  // Content capture is intentionally opt-in and controlled by diagnostics.otel.captureContent.
-  // When disabled, we still emit timings/usage/errors but omit message content fields.
-  const outputParts =
-    ctx.params.captureContent === true
-      ? buildAssistantParts((assistantMessage as { content?: unknown }).content)
-      : [];
-  const outputMessages: GenAiMessage[] =
-    ctx.params.captureContent === true && outputParts.length
-      ? [
-          {
-            role: "assistant",
-            parts: outputParts,
-            ...(finishReasons?.length ? { finish_reason: finishReasons[0] } : {}),
-          },
-        ]
-      : [];
+    emitDiagnosticEvent({
+      type: "model.inference",
+      runId: ctx.params.runId,
+      sessionKey: ctx.params.sessionKey,
+      sessionId: ctx.params.sessionId ?? (ctx.params.session as { id?: string }).id,
+      channel: ctx.params.channel,
+      usage: {
+        input: usage?.input,
+        output: usage?.output,
+        cacheRead: usage?.cacheRead,
+        cacheWrite: usage?.cacheWrite,
+        promptTokens,
+        total: totalTokens,
+      },
+      provider: (assistantMessage as { provider?: string }).provider,
+      model: (assistantMessage as { model?: string }).model,
+      operationName: "chat",
+      durationMs,
+      ttftMs,
+      finishReasons,
+      outputMessages: outputMessages.length > 0 ? outputMessages : undefined,
+      error,
+      errorType: error ? stopReason : undefined,
+      callIndex: ctx.state.assistantMessageIndex,
+    });
 
-  emitDiagnosticEvent({
-    type: "model.inference",
-    runId: ctx.params.runId,
-    sessionKey: ctx.params.sessionKey,
-    sessionId: ctx.params.sessionId ?? (ctx.params.session as { id?: string }).id,
-    channel: ctx.params.channel,
-    usage: {
-      input: usage?.input,
-      output: usage?.output,
-      cacheRead: usage?.cacheRead,
-      cacheWrite: usage?.cacheWrite,
-      promptTokens,
-      total: totalTokens,
-    },
-    provider: (assistantMessage as { provider?: string }).provider,
-    model: (assistantMessage as { model?: string }).model,
-    operationName: "chat",
-    durationMs,
-    ttftMs,
-    finishReasons,
-    outputMessages: outputMessages.length > 0 ? outputMessages : undefined,
-    error,
-    errorType: error ? stopReason : undefined,
-    callIndex: ctx.state.assistantMessageIndex,
-  });
+    ctx.state.deltaBuffer = "";
+    ctx.state.blockBuffer = "";
+    ctx.blockChunker?.reset();
+    ctx.state.blockState.thinking = false;
+    ctx.state.blockState.final = false;
+    ctx.state.blockState.inlineCode = createInlineCodeState();
+    ctx.state.lastStreamedAssistant = undefined;
+    ctx.state.lastStreamedAssistantCleaned = undefined;
+    ctx.state.reasoningStreamOpen = false;
+  };
+
+  if (
+    !ctx.params.silentExpected &&
+    ctx.state.blockReplyBreak === "message_end" &&
+    ctx.params.onBlockReplyFlush
+  ) {
+    const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer();
+    if (isPromiseLike<void>(flushBlockReplyBufferResult)) {
+      return flushBlockReplyBufferResult
+        .then(() => {
+          const onBlockReplyFlushResult = ctx.params.onBlockReplyFlush?.();
+          if (isPromiseLike<void>(onBlockReplyFlushResult)) {
+            return onBlockReplyFlushResult;
+          }
+        })
+        .finally(() => {
+          finalizeMessageEnd();
+        });
+    }
+    const onBlockReplyFlushResult = ctx.params.onBlockReplyFlush();
+    if (isPromiseLike<void>(onBlockReplyFlushResult)) {
+      return onBlockReplyFlushResult.finally(() => {
+        finalizeMessageEnd();
+      });
+    }
+  }
+
+  finalizeMessageEnd();
 }

@@ -1,8 +1,5 @@
 import { resolveStateDir } from "../../config/paths.js";
-import {
-  listRuntimeImageGenerationProviders,
-  generateImage,
-} from "../../image-generation/runtime.js";
+import { loadBundledPluginPublicSurfaceModuleSync } from "../../plugin-sdk/facade-runtime.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import {
   createLazyRuntimeMethod,
@@ -12,34 +9,16 @@ import {
 import { VERSION } from "../../version.js";
 import { listWebSearchProviders, runWebSearch } from "../../web-search/runtime.js";
 import { createRuntimeAgent } from "./runtime-agent.js";
+import { defineCachedValue } from "./runtime-cache.js";
 import { createRuntimeChannel } from "./runtime-channel.js";
 import { createRuntimeConfig } from "./runtime-config.js";
 import { createRuntimeEvents } from "./runtime-events.js";
 import { createRuntimeLogging } from "./runtime-logging.js";
 import { createRuntimeMedia } from "./runtime-media.js";
 import { createRuntimeSystem } from "./runtime-system.js";
-import { createRuntimeTools } from "./runtime-tools.js";
+import { createRuntimeTaskFlow } from "./runtime-taskflow.js";
+import { createRuntimeTasks } from "./runtime-tasks.js";
 import type { PluginRuntime } from "./types.js";
-
-function defineCachedValue<T extends object, K extends PropertyKey>(
-  target: T,
-  key: K,
-  create: () => unknown,
-): void {
-  let cached: unknown;
-  let ready = false;
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    get() {
-      if (!ready) {
-        cached = create();
-        ready = true;
-      }
-      return cached;
-    },
-  });
-}
 
 const loadTtsRuntime = createLazyRuntimeModule(() => import("./runtime-tts.runtime.js"));
 const loadMediaUnderstandingRuntime = createLazyRuntimeModule(
@@ -70,6 +49,29 @@ function createRuntimeMediaUnderstandingFacade(): PluginRuntime["mediaUnderstand
     ),
     describeVideoFile: bindMediaUnderstandingRuntime((runtime) => runtime.describeVideoFile),
     transcribeAudioFile: bindMediaUnderstandingRuntime((runtime) => runtime.transcribeAudioFile),
+  };
+}
+
+type RuntimeImageGenerationModule = Pick<
+  typeof import("../../plugin-sdk/image-generation-runtime.js"),
+  "generateImage" | "listRuntimeImageGenerationProviders"
+>;
+let cachedRuntimeImageGenerationModule: RuntimeImageGenerationModule | null = null;
+
+function loadRuntimeImageGenerationModule(): RuntimeImageGenerationModule {
+  cachedRuntimeImageGenerationModule ??=
+    loadBundledPluginPublicSurfaceModuleSync<RuntimeImageGenerationModule>({
+      dirName: "image-generation-core",
+      artifactBasename: "runtime-api.js",
+    });
+  return cachedRuntimeImageGenerationModule;
+}
+
+function createRuntimeImageGeneration(): PluginRuntime["imageGeneration"] {
+  return {
+    generate: (params) => loadRuntimeImageGenerationModule().generateImage(params),
+    listProviders: (params) =>
+      loadRuntimeImageGenerationModule().listRuntimeImageGenerationProviders(params),
   };
 }
 
@@ -183,6 +185,10 @@ export type CreatePluginRuntimeOptions = {
 
 export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): PluginRuntime {
   const mediaUnderstanding = createRuntimeMediaUnderstandingFacade();
+  const taskFlow = createRuntimeTaskFlow();
+  const tasks = createRuntimeTasks({
+    legacyTaskFlow: taskFlow,
+  });
   const runtime = {
     // Sourced from the shared OpenClaw version resolver (#52899) so plugins
     // always see the same version the CLI reports, avoiding API-version drift.
@@ -195,21 +201,23 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     ),
     system: createRuntimeSystem(),
     media: createRuntimeMedia(),
-    imageGeneration: {
-      generate: generateImage,
-      listProviders: listRuntimeImageGenerationProviders,
-    },
     webSearch: {
       listProviders: listWebSearchProviders,
       search: runWebSearch,
     },
-    tools: createRuntimeTools(),
     channel: createRuntimeChannel(),
     events: createRuntimeEvents(),
     logging: createRuntimeLogging(),
     state: { resolveStateDir },
-  } satisfies Omit<PluginRuntime, "tts" | "mediaUnderstanding" | "stt" | "modelAuth"> &
-    Partial<Pick<PluginRuntime, "tts" | "mediaUnderstanding" | "stt" | "modelAuth">>;
+    tasks,
+    taskFlow,
+  } satisfies Omit<
+    PluginRuntime,
+    "tts" | "mediaUnderstanding" | "stt" | "modelAuth" | "imageGeneration"
+  > &
+    Partial<
+      Pick<PluginRuntime, "tts" | "mediaUnderstanding" | "stt" | "modelAuth" | "imageGeneration">
+    >;
 
   defineCachedValue(runtime, "tts", createRuntimeTts);
   defineCachedValue(runtime, "mediaUnderstanding", () => mediaUnderstanding);
@@ -217,6 +225,7 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     transcribeAudioFile: mediaUnderstanding.transcribeAudioFile,
   }));
   defineCachedValue(runtime, "modelAuth", createRuntimeModelAuth);
+  defineCachedValue(runtime, "imageGeneration", createRuntimeImageGeneration);
 
   return runtime as PluginRuntime;
 }
