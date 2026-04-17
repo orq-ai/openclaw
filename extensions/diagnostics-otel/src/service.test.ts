@@ -73,7 +73,7 @@ vi.mock("@opentelemetry/exporter-metrics-otlp-http", () => ({
 }));
 
 vi.mock("@opentelemetry/exporter-metrics-otlp-proto", () => ({
-  OTLPMetricExporter: class {},
+  OTLPMetricExporter: function OTLPMetricExporter() {},
 }));
 
 vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
@@ -85,10 +85,8 @@ vi.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
 }));
 
 vi.mock("@opentelemetry/exporter-trace-otlp-proto", () => ({
-  OTLPTraceExporter: class {
-    constructor(options?: unknown) {
-      traceExporterCtor(options);
-    }
+  OTLPTraceExporter: function OTLPTraceExporter(options?: unknown) {
+    traceExporterCtor(options);
   },
 }));
 
@@ -97,11 +95,11 @@ vi.mock("@opentelemetry/exporter-logs-otlp-http", () => ({
 }));
 
 vi.mock("@opentelemetry/exporter-logs-otlp-proto", () => ({
-  OTLPLogExporter: class {},
+  OTLPLogExporter: function OTLPLogExporter() {},
 }));
 
 vi.mock("@opentelemetry/sdk-logs", () => ({
-  BatchLogRecordProcessor: class {},
+  BatchLogRecordProcessor: function BatchLogRecordProcessor() {},
   LoggerProvider: class {
     getLogger = vi.fn(() => ({
       emit: logEmit,
@@ -111,19 +109,18 @@ vi.mock("@opentelemetry/sdk-logs", () => ({
 }));
 
 vi.mock("@opentelemetry/sdk-metrics", () => ({
-  PeriodicExportingMetricReader: class {},
+  PeriodicExportingMetricReader: function PeriodicExportingMetricReader() {},
 }));
 
 vi.mock("@opentelemetry/sdk-trace-base", () => ({
-  ParentBasedSampler: class {},
-  TraceIdRatioBasedSampler: class {},
+  ParentBasedSampler: function ParentBasedSampler() {},
+  TraceIdRatioBasedSampler: function TraceIdRatioBasedSampler() {},
 }));
 
 vi.mock("@opentelemetry/resources", () => ({
   resourceFromAttributes: vi.fn((attrs: Record<string, unknown>) => attrs),
-  Resource: class {
-    // eslint-disable-next-line @typescript-eslint/no-useless-constructor
-    constructor(_value?: unknown) {}
+  Resource: function Resource(_value?: unknown) {
+    // Constructor shape required by the mocked OpenTelemetry API.
   },
 }));
 

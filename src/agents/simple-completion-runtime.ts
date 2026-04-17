@@ -1,5 +1,6 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
-import type { OpenClawConfig } from "../config/config.js";
+import { complete, type Api, type Model } from "@mariozechner/pi-ai";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { formatErrorMessage } from "../infra/errors.js";
 import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
 import { DEFAULT_PROVIDER } from "./defaults.js";
 import {
@@ -25,6 +26,11 @@ type CompletionRuntimeCredential = {
 };
 
 type AllowedMissingApiKeyMode = ResolvedProviderAuth["mode"];
+
+export type SimpleCompletionModelOptions = {
+  maxTokens?: number;
+  signal?: AbortSignal;
+};
 
 export type PreparedSimpleCompletionModel =
   | {
@@ -147,7 +153,7 @@ export async function prepareSimpleCompletionModel(params: {
     });
   } catch (err) {
     return {
-      error: `Auth lookup failed for provider "${resolved.model.provider}": ${err instanceof Error ? err.message : String(err)}`,
+      error: `Auth lookup failed for provider "${resolved.model.provider}": ${formatErrorMessage(err)}`,
     };
   }
   const rawApiKey = auth.apiKey?.trim();
@@ -230,4 +236,16 @@ export async function prepareSimpleCompletionModelForAgent(params: {
     model: prepared.model,
     auth: prepared.auth,
   };
+}
+
+export async function completeWithPreparedSimpleCompletionModel(params: {
+  model: Model<Api>;
+  auth: ResolvedProviderAuth;
+  context: Parameters<typeof complete>[1];
+  options?: SimpleCompletionModelOptions;
+}) {
+  return await complete(params.model, params.context, {
+    ...params.options,
+    apiKey: params.auth.apiKey,
+  });
 }

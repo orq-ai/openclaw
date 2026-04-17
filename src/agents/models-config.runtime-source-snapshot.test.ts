@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { NON_ENV_SECRETREF_MARKER } from "./model-auth-markers.js";
 import {
@@ -8,6 +8,21 @@ import {
   withModelsTempHome as withTempHome,
   withTempEnv,
 } from "./models-config.e2e-harness.js";
+
+vi.mock("../plugins/provider-runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("../plugins/provider-runtime.js")>(
+    "../plugins/provider-runtime.js",
+  );
+  return {
+    ...actual,
+    applyProviderConfigDefaultsWithPlugin: (config: OpenClawConfig) => config,
+    applyProviderNativeStreamingUsageCompatWithPlugin: () => undefined,
+    normalizeProviderConfigWithPlugin: () => undefined,
+    resetProviderRuntimeHookCacheForTest: () => undefined,
+    resolveProviderConfigApiKeyWithPlugin: () => undefined,
+    resolveProviderSyntheticAuthWithPlugin: () => undefined,
+  };
+});
 
 vi.mock("./models-config.providers.js", async () => {
   const actual = await vi.importActual<typeof import("./models-config.providers.js")>(
@@ -29,8 +44,7 @@ let ensureOpenClawModelsJson: typeof import("./models-config.js").ensureOpenClaw
 let resetModelsJsonReadyCacheForTest: typeof import("./models-config.js").resetModelsJsonReadyCacheForTest;
 let readGeneratedModelsJson: typeof import("./models-config.test-utils.js").readGeneratedModelsJson;
 
-beforeEach(async () => {
-  vi.resetModules();
+beforeAll(async () => {
   ({ clearConfigCache, clearRuntimeConfigSnapshot, loadConfig, setRuntimeConfigSnapshot } =
     await import("../config/config.js"));
   ({ ensureOpenClawModelsJson, resetModelsJsonReadyCacheForTest } =
@@ -39,6 +53,8 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  clearRuntimeConfigSnapshot();
+  clearConfigCache();
   resetModelsJsonReadyCacheForTest();
 });
 
@@ -263,6 +279,9 @@ describe("models-config runtime source snapshot", () => {
               openai: {
                 ...runtimeConfig.models!.providers!.openai,
                 baseUrl: "https://api.openai.com/v1",
+                headers: {
+                  "X-OpenClaw-Test": "one",
+                },
               },
             },
           },
@@ -274,6 +293,9 @@ describe("models-config runtime source snapshot", () => {
               openai: {
                 ...runtimeConfig.models!.providers!.openai,
                 baseUrl: "https://mirror.example/v1",
+                headers: {
+                  "X-OpenClaw-Test": "two",
+                },
               },
             },
           },
@@ -283,17 +305,26 @@ describe("models-config runtime source snapshot", () => {
           setRuntimeConfigSnapshot(runtimeConfig, sourceConfig);
           await ensureOpenClawModelsJson(firstCandidate);
           let parsed = await readGeneratedModelsJson<{
-            providers: Record<string, { baseUrl?: string; apiKey?: string }>;
+            providers: Record<
+              string,
+              { baseUrl?: string; apiKey?: string; headers?: Record<string, string> }
+            >;
           }>();
           expect(parsed.providers.openai?.baseUrl).toBe("https://api.openai.com/v1");
           expect(parsed.providers.openai?.apiKey).toBe("OPENAI_API_KEY"); // pragma: allowlist secret
+          expect(parsed.providers.openai?.headers?.["X-OpenClaw-Test"]).toBe("one");
 
+          // Header changes still rewrite models.json, but merge mode preserves the existing baseUrl.
           await ensureOpenClawModelsJson(secondCandidate);
           parsed = await readGeneratedModelsJson<{
-            providers: Record<string, { baseUrl?: string; apiKey?: string }>;
+            providers: Record<
+              string,
+              { baseUrl?: string; apiKey?: string; headers?: Record<string, string> }
+            >;
           }>();
-          expect(parsed.providers.openai?.baseUrl).toBe("https://mirror.example/v1");
+          expect(parsed.providers.openai?.baseUrl).toBe("https://api.openai.com/v1");
           expect(parsed.providers.openai?.apiKey).toBe("OPENAI_API_KEY"); // pragma: allowlist secret
+          expect(parsed.providers.openai?.headers?.["X-OpenClaw-Test"]).toBe("two");
         } finally {
           clearRuntimeConfigSnapshot();
           clearConfigCache();
