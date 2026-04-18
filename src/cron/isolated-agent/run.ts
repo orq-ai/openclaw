@@ -113,6 +113,48 @@ function resolveNonNegativeNumber(value: number | undefined): number | undefined
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+/**
+ * Emit the cron run.completed diagnostic event. Called on every terminal
+ * outcome (success, abort, exception) so OTEL spans do not leak when the
+ * run ends before finalizeCronRun.
+ */
+function emitCronRunCompleted(params: {
+  enabled: boolean;
+  agentSessionKey: string;
+  sessionId?: string;
+  provider?: string;
+  model?: string;
+  usage?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    total?: number;
+  };
+  cronRunStartTime?: number;
+  runEndedAt?: number;
+  error?: string;
+}) {
+  if (!params.enabled) {
+    return;
+  }
+  const now = Date.now();
+  const endedAt = params.runEndedAt ?? now;
+  const startedAt = params.cronRunStartTime ?? endedAt;
+  emitDiagnosticEvent({
+    type: "run.completed",
+    runId: params.sessionId ?? params.agentSessionKey,
+    sessionKey: params.agentSessionKey,
+    sessionId: params.sessionId,
+    channel: "cron",
+    provider: params.provider,
+    model: params.model,
+    usage: params.usage ?? {},
+    durationMs: endedAt - startedAt,
+    error: params.error,
+  });
+}
+
 export type { RunCronAgentTurnResult } from "./run.types.js";
 
 type CronExecutionRuntime = typeof import("./run-executor.runtime.js");
@@ -620,28 +662,22 @@ async function finalizeCronRun(params: {
   // Emit run.completed diagnostic event so OTEL spans are properly closed.
   // The gateway path emits this from agent-runner.ts, but the cron path
   // calls executeCronRun directly and needs its own emission.
-  if (params.cronDiagnosticsEnabled) {
-    emitDiagnosticEvent({
-      type: "run.completed",
-      runId: prepared.cronSession.sessionEntry.sessionId ?? prepared.agentSessionKey,
-      sessionKey: prepared.agentSessionKey,
-      sessionId: prepared.cronSession.sessionEntry.sessionId,
-      channel: "cron",
-      provider: providerUsed,
-      model: modelUsed,
-      usage: {
-        input: usage?.input,
-        output: usage?.output,
-        cacheRead: usage?.cacheRead,
-        cacheWrite: usage?.cacheWrite,
-        total: prepared.cronSession.sessionEntry.totalTokens,
-      },
-      durationMs:
-        execution.runEndedAt && params.cronRunStartTime
-          ? execution.runEndedAt - params.cronRunStartTime
-          : Date.now() - (params.cronRunStartTime ?? Date.now()),
-    });
-  }
+  emitCronRunCompleted({
+    enabled: params.cronDiagnosticsEnabled === true,
+    agentSessionKey: prepared.agentSessionKey,
+    sessionId: prepared.cronSession.sessionEntry.sessionId,
+    provider: providerUsed,
+    model: modelUsed,
+    usage: {
+      input: usage?.input,
+      output: usage?.output,
+      cacheRead: usage?.cacheRead,
+      cacheWrite: usage?.cacheWrite,
+      total: prepared.cronSession.sessionEntry.totalTokens,
+    },
+    cronRunStartTime: params.cronRunStartTime,
+    runEndedAt: execution.runEndedAt,
+  });
 
   if (params.isAborted()) {
     return prepared.withRunSession({ status: "error", error: params.abortReason(), ...telemetry });
@@ -818,6 +854,16 @@ export async function runCronIsolatedAgentTurn(params: {
     if (isAborted()) {
       const abortedResult = prepared.context.withRunSession({ status: "error", error: abortReason() });
       emitCronRunProcessed(abortedResult);
+      emitCronRunCompleted({
+        enabled: cronDiagnosticsEnabled,
+        agentSessionKey,
+        sessionId: prepared.context.cronSession.sessionEntry.sessionId,
+        provider: execution.liveSelection.provider,
+        model: execution.liveSelection.model,
+        cronRunStartTime,
+        runEndedAt: execution.runEndedAt,
+        error: abortReason(),
+      });
       return abortedResult;
     }
     const finalResult = await finalizeCronRun({
@@ -833,6 +879,15 @@ export async function runCronIsolatedAgentTurn(params: {
   } catch (err) {
     const errResult = prepared.context.withRunSession({ status: "error", error: String(err) });
     emitCronRunProcessed(errResult);
+    emitCronRunCompleted({
+      enabled: cronDiagnosticsEnabled,
+      agentSessionKey,
+      sessionId: prepared.context.cronSession.sessionEntry.sessionId,
+      provider: prepared.context.liveSelection.provider,
+      model: prepared.context.liveSelection.model,
+      cronRunStartTime,
+      error: String(err),
+    });
     return errResult;
   }
 }

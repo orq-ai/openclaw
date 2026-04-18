@@ -17,6 +17,7 @@ import type { ExecApprovalDecision } from "../infra/exec-approvals.js";
 import type { PluginHookAfterToolCallEvent } from "../plugins/types.js";
 import { normalizeOptionalLowercaseString, readStringValue } from "../shared/string-coerce.js";
 import type { ApplyPatchSummary } from "./apply-patch.js";
+import { sanitizeDiagnosticPayload } from "./payload-redaction.js";
 import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 import { parseExecApprovalResultText } from "./exec-approval-result.js";
 import { normalizeTextForComparison } from "./pi-embedded-helpers.js";
@@ -926,7 +927,10 @@ export async function handleToolExecutionEnd(
     },
   });
 
-  // Emit OTel diagnostic event for tool execution
+  // Emit OTel diagnostic event for tool execution.
+  // Redact credential-like fields before egress — OTLP is a parallel
+  // egress surface to logs/compaction and must strip API keys, Bearer
+  // tokens, passwords, etc. from tool args and outputs.
   const startTime = ctx.state.toolStartTimeById.get(toolCallId);
   ctx.state.toolStartTimeById.delete(toolCallId);
   const toolInput = ctx.state.toolArgsById.get(toolCallId);
@@ -942,8 +946,8 @@ export async function handleToolExecutionEnd(
     toolCallId,
     durationMs: typeof startTime === "number" ? Date.now() - startTime : undefined,
     error: isToolError ? extractToolErrorMessage(sanitizedResult) : undefined,
-    toolInput,
-    toolOutput: sanitizedResult,
+    toolInput: sanitizeDiagnosticPayload(toolInput) as Record<string, unknown> | undefined,
+    toolOutput: sanitizeDiagnosticPayload(sanitizedResult),
   });
 
   if (isExecToolName(toolName)) {
