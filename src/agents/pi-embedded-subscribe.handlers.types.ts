@@ -4,8 +4,10 @@ import type { ReasoningLevel } from "../auto-reply/thinking.js";
 import type { InlineCodeState } from "../markdown/code-spans.js";
 import type { HookRunner } from "../plugins/hooks.js";
 import type { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
-import type { MessagingToolSend } from "./pi-embedded-messaging.js";
+import type { MessagingToolSend } from "./pi-embedded-messaging.types.js";
 import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
+import type { EmbeddedRunReplayState } from "./pi-embedded-runner/replay-state.js";
+import type { EmbeddedRunLivenessState } from "./pi-embedded-runner/types.js";
 import type {
   BlockReplyChunking,
   SubscribeEmbeddedPiSessionParams,
@@ -31,6 +33,9 @@ export type EmbeddedPiSubscribeState = {
   toolStartTimeById: Map<string, number>;
   toolArgsById: Map<string, Record<string, unknown> | undefined>;
   toolSummaryById: Set<string>;
+  itemActiveIds: Set<string>;
+  itemStartedCount: number;
+  itemCompletedCount: number;
   lastToolError?: ToolErrorSummary;
 
   blockReplyBreak: "text_end" | "message_end";
@@ -50,6 +55,7 @@ export type EmbeddedPiSubscribeState = {
   lastBlockReplyText?: string;
   reasoningStreamOpen: boolean;
   assistantMessageIndex: number;
+  lastAssistantStreamItemId?: string;
   lastAssistantTextMessageIndex: number;
   lastAssistantTextNormalized?: string;
   lastAssistantTextTrimmed?: string;
@@ -63,6 +69,9 @@ export type EmbeddedPiSubscribeState = {
   compactionRetryReject?: (reason?: unknown) => void;
   compactionRetryPromise: Promise<void> | null;
   unsubscribed: boolean;
+  replayState: EmbeddedRunReplayState;
+  livenessState?: EmbeddedRunLivenessState;
+  hadDeterministicSideEffect?: boolean;
 
   messagingToolSentTexts: string[];
   messagingToolSentTextsNormalized: string[];
@@ -74,6 +83,7 @@ export type EmbeddedPiSubscribeState = {
   pendingMessagingMediaUrls: Map<string, string[]>;
   pendingToolMediaUrls: string[];
   pendingToolAudioAsVoice: boolean;
+  deterministicApprovalPromptPending: boolean;
   deterministicApprovalPromptSent: boolean;
   lastAssistant?: AgentMessage;
   /** Timestamp (ms) when the first token arrived from the model. */
@@ -91,6 +101,7 @@ export type EmbeddedPiSubscribeContext = {
   blockChunking?: BlockReplyChunking;
   blockChunker: EmbeddedBlockChunker | null;
   hookRunner?: HookRunner;
+  builtinToolNames?: ReadonlySet<string>;
   noteLastAssistant: (msg: AgentMessage) => void;
 
   shouldEmitToolResult: () => boolean;
@@ -146,6 +157,7 @@ export type ToolHandlerParams = Pick<
   | "onBlockReplyFlush"
   | "onAgentEvent"
   | "onToolResult"
+  | "toolResultFormat"
 >;
 
 export type ToolHandlerState = Pick<
@@ -155,12 +167,17 @@ export type ToolHandlerState = Pick<
   | "toolStartTimeById"
   | "toolArgsById"
   | "toolSummaryById"
+  | "itemActiveIds"
+  | "itemStartedCount"
+  | "itemCompletedCount"
   | "lastToolError"
   | "pendingMessagingTargets"
   | "pendingMessagingTexts"
   | "pendingMessagingMediaUrls"
   | "pendingToolMediaUrls"
   | "pendingToolAudioAsVoice"
+  | "deterministicApprovalPromptPending"
+  | "replayState"
   | "messagingToolSentTexts"
   | "messagingToolSentTextsNormalized"
   | "messagingToolSentMediaUrls"
@@ -174,6 +191,7 @@ export type ToolHandlerContext = {
   state: ToolHandlerState;
   log: EmbeddedSubscribeLogger;
   hookRunner?: HookRunner;
+  builtinToolNames?: ReadonlySet<string>;
   flushBlockReplyBuffer: () => void | Promise<void>;
   shouldEmitToolResult: () => boolean;
   shouldEmitToolOutput: () => boolean;
