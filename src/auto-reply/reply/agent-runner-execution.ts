@@ -1359,6 +1359,7 @@ export async function runAgentTurnWithFallback(params: {
       if (isReplyOperationRestartAbort(params.replyOperation)) {
         return {
           kind: "final",
+          runId,
           payload: {
             text: buildRestartLifecycleReplyText(),
           },
@@ -1368,6 +1369,7 @@ export async function runAgentTurnWithFallback(params: {
       if (isReplyOperationUserAbort(params.replyOperation)) {
         return {
           kind: "final",
+          runId,
           payload: {
             text: SILENT_REPLY_TOKEN,
           },
@@ -1379,6 +1381,7 @@ export async function runAgentTurnWithFallback(params: {
         params.replyOperation?.fail("gateway_draining", restartLifecycleError);
         return {
           kind: "final",
+          runId,
           payload: {
             text: buildRestartLifecycleReplyText(),
           },
@@ -1389,6 +1392,7 @@ export async function runAgentTurnWithFallback(params: {
         params.replyOperation?.fail("command_lane_cleared", restartLifecycleError);
         return {
           kind: "final",
+          runId,
           payload: {
             text: buildRestartLifecycleReplyText(),
           },

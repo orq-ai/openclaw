@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-extraneous-class */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const registerLogTransportMock = vi.hoisted(() => vi.fn());

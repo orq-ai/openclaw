@@ -96,6 +96,10 @@ export type EmbeddedRunAttemptResult = {
   clientToolCall?: { name: string; params: Record<string, unknown> };
   /** True when sessions_yield tool was called during this attempt. */
   yieldDetected?: boolean;
+  /** System prompt text — surfaced for OTEL diagnostic emission. */
+  systemPromptText?: string;
+  /** Timestamp (ms) of first token received — surfaced for OTEL ttft metric. */
+  firstTokenAt?: number;
   replayMetadata: EmbeddedRunReplayMetadata;
   itemLifecycle: {
     startedCount: number;

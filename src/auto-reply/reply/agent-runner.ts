@@ -6,7 +6,7 @@ import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { resolveExtraParams } from "../../agents/pi-embedded-runner/extra-params.js";
 import { queueEmbeddedPiMessage } from "../../agents/pi-embedded-runner/runs.js";
-import { derivePromptTokens, hasNonzeroUsage } from "../../agents/usage.js";
+import { derivePromptTokens, hasNonzeroUsage, normalizeUsage } from "../../agents/usage.js";
 import {
   loadSessionStore,
   resolveSessionPluginStatusLines,
