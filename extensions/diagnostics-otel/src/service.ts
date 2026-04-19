@@ -428,7 +428,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         parentCtx?: ReturnType<typeof context.active>,
       ) => {
         const spanAttrs: Record<string, string | number> = {
-          "gen_ai.operation.name": evt.toolName,
+          "gen_ai.operation.name": "execute_tool",
           "gen_ai.tool.name": evt.toolName,
           "gen_ai.tool.type": evt.toolType ?? "function",
         };
@@ -453,7 +453,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
           }
         }
 
-        const spanName = evt.toolName;
+        const spanName = `execute_tool ${evt.toolName}`;
         const span = spanWithDuration(
           spanName,
           spanAttrs,

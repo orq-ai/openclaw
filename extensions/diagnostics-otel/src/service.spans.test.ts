@@ -340,12 +340,12 @@ describe("diagnostics-otel service – span hierarchy", () => {
     const parentSpan = telemetryState.tracer.startSpan.mock.results[0]?.value;
 
     // Tool spans should have been created with a parent context derived from the run span
-    expect(calls[1][0]).toBe("web_search");
+    expect(calls[1][0]).toBe("execute_tool web_search");
     const toolParentCtx1 = calls[1][2] as { _type: string; _span: unknown };
     expect(toolParentCtx1._type).toBe("with-parent");
     expect(toolParentCtx1._span).toBe(parentSpan);
 
-    expect(calls[2][0]).toBe("read");
+    expect(calls[2][0]).toBe("execute_tool read");
     const toolParentCtx2 = calls[2][2] as { _type: string; _span: unknown };
     expect(toolParentCtx2._type).toBe("with-parent");
     expect(toolParentCtx2._span).toBe(parentSpan);
@@ -392,7 +392,7 @@ describe("diagnostics-otel service – span hierarchy", () => {
     )?.value;
     expect(runSpan).toBeDefined();
 
-    const toolCall = calls.find((c) => c[0] === "web_search");
+    const toolCall = calls.find((c) => c[0] === "execute_tool web_search");
     expect(toolCall).toBeDefined();
     const toolParentCtx = toolCall?.[2] as { _type: string; _span: unknown };
     expect(toolParentCtx._type).toBe("with-parent");
@@ -427,7 +427,7 @@ describe("diagnostics-otel service – span hierarchy", () => {
 
     // Span should be created immediately (no buffering)
     expect(telemetryState.tracer.startSpan).toHaveBeenCalledTimes(1);
-    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("exec");
+    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("execute_tool exec");
     // No parent context
     expect(telemetryState.tracer.startSpan.mock.calls[0][2]).toBeUndefined();
 
@@ -447,7 +447,7 @@ describe("diagnostics-otel service – span hierarchy", () => {
 
     // Tool span should be created immediately without a parent
     expect(telemetryState.tracer.startSpan).toHaveBeenCalledTimes(1);
-    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("web_search");
+    expect(telemetryState.tracer.startSpan.mock.calls[0][0]).toBe("execute_tool web_search");
     expect(telemetryState.tracer.startSpan.mock.calls[0][2]).toBeUndefined();
 
     await service.stop?.({} as never);
